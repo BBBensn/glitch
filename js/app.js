@@ -4,6 +4,42 @@ const MAX_DIM = 1600;
 
 const EFFECT_DEFS = [
   {
+    id: 'basicAdjust', label: 'Grundkorrektur', color: '#facc15',
+    apply: Effects.basicAdjust,
+    params: [
+      { key: 'brightness', label: 'Helligkeit', type: 'range', min: -100, max: 100, step: 1, default: 0 },
+      { key: 'contrast', label: 'Kontrast', type: 'range', min: -100, max: 100, step: 1, default: 0 },
+      { key: 'saturation', label: 'Sättigung', type: 'range', min: -100, max: 100, step: 1, default: 0 },
+    ],
+  },
+  {
+    id: 'curve', label: 'Gradationskurve', color: '#a78bfa',
+    apply: Effects.curve,
+    params: [
+      { key: 'points', label: 'Kurve', type: 'curve', default: [{ x: 0, y: 0 }, { x: 255, y: 255 }] },
+    ],
+  },
+  {
+    id: 'colorOverlay', label: 'Farbüberlagerung', color: '#fb7185',
+    apply: Effects.colorOverlay,
+    params: [
+      { key: 'color', label: 'Farbe', type: 'color', default: '#ff0051' },
+      { key: 'blend', label: 'Modus', type: 'select', default: 'normal',
+        options: [['normal', 'Normal'], ['multiply', 'Multiplizieren'], ['screen', 'Negativ multiplizieren'],
+                  ['overlay', 'Ineinanderkopieren'], ['color', 'Farbton']] },
+      { key: 'opacity', label: 'Deckkraft', type: 'range', min: 0, max: 100, step: 1, default: 50 },
+    ],
+  },
+  {
+    id: 'pixelate', label: 'Pixelation', color: '#2dd4bf',
+    apply: Effects.pixelate,
+    params: [
+      { key: 'blockSize', label: 'Blockgröße (px)', type: 'range', min: 2, max: 100, step: 1, default: 20 },
+      { key: 'displacement', label: 'Displacement', type: 'range', min: 0, max: 100, step: 1, default: 0 },
+      { key: 'seed', label: '', type: 'seed', default: 1 },
+    ],
+  },
+  {
     id: 'pixelsort', label: 'Pixel Sort', color: '#00A6FB',
     apply: Effects.pixelSort,
     params: [
@@ -122,7 +158,9 @@ function setStatus(state, text) {
 
 function defaultParams(def) {
   const p = {};
-  for (const param of def.params) p[param.key] = param.default;
+  for (const param of def.params) {
+    p[param.key] = Array.isArray(param.default) ? param.default.map(pt => ({ ...pt })) : param.default;
+  }
   return p;
 }
 
@@ -257,6 +295,24 @@ function buildParamControl(layer, param) {
     return row;
   }
 
+  if (param.type === 'color') {
+    const label = document.createElement('label');
+    label.className = 'param-label';
+    label.textContent = param.label;
+    const input = document.createElement('input');
+    input.type = 'color';
+    input.className = 'param-color';
+    input.value = layer.params[param.key];
+    input.addEventListener('input', () => { layer.params[param.key] = input.value; scheduleRender(); });
+    row.appendChild(label);
+    row.appendChild(input);
+    return row;
+  }
+
+  if (param.type === 'curve') {
+    return buildCurveControl(layer, param);
+  }
+
   // range
   const labelRow = document.createElement('div');
   labelRow.className = 'param-label-row';
@@ -283,6 +339,142 @@ function buildParamControl(layer, param) {
   row.appendChild(input);
   return row;
 }
+
+const CURVE_SIZE = 200;
+let curveDrag = null; // { pts, index, canvas, minX, maxX }
+
+function curveEventXY(canvas, clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  const cx = clamp((clientX - rect.left) * (CURVE_SIZE / rect.width), 0, CURVE_SIZE);
+  const cy = clamp((clientY - rect.top) * (CURVE_SIZE / rect.height), 0, CURVE_SIZE);
+  return [cx, cy];
+}
+function curveToCanvasXY(px, py) { return [px / 255 * CURVE_SIZE, CURVE_SIZE - py / 255 * CURVE_SIZE]; }
+function curveToDataXY(cx, cy) {
+  return [clamp(Math.round(cx / CURVE_SIZE * 255), 0, 255), clamp(Math.round((CURVE_SIZE - cy) / CURVE_SIZE * 255), 0, 255)];
+}
+
+function drawCurve(canvas, pts) {
+  const c = canvas.getContext('2d');
+  c.clearRect(0, 0, CURVE_SIZE, CURVE_SIZE);
+  c.strokeStyle = 'rgba(255,255,255,0.07)';
+  c.lineWidth = 1;
+  for (let i = 1; i < 4; i++) {
+    const p = i * CURVE_SIZE / 4;
+    c.beginPath(); c.moveTo(p, 0); c.lineTo(p, CURVE_SIZE); c.stroke();
+    c.beginPath(); c.moveTo(0, p); c.lineTo(CURVE_SIZE, p); c.stroke();
+  }
+  c.strokeStyle = 'rgba(255,255,255,0.12)';
+  c.beginPath(); c.moveTo(0, CURVE_SIZE); c.lineTo(CURVE_SIZE, 0); c.stroke();
+
+  const lut = Effects.buildCurveLUT(pts);
+  c.strokeStyle = '#00A6FB';
+  c.lineWidth = 2;
+  c.beginPath();
+  for (let x = 0; x < 256; x++) {
+    const [cx, cy] = curveToCanvasXY(x, lut[x]);
+    if (x === 0) c.moveTo(cx, cy); else c.lineTo(cx, cy);
+  }
+  c.stroke();
+
+  c.fillStyle = '#00A6FB';
+  for (const pt of pts) {
+    const [cx, cy] = curveToCanvasXY(pt.x, pt.y);
+    c.beginPath(); c.arc(cx, cy, 4, 0, Math.PI * 2); c.fill();
+  }
+}
+
+function nearestCurvePoint(pts, cx, cy) {
+  let nearest = -1, nearestDist = Infinity;
+  pts.forEach((pt, i) => {
+    const [px, py] = curveToCanvasXY(pt.x, pt.y);
+    const d = Math.hypot(px - cx, py - cy);
+    if (d < nearestDist) { nearestDist = d; nearest = i; }
+  });
+  return [nearest, nearestDist];
+}
+
+function buildCurveControl(layer, param) {
+  const wrap = document.createElement('div');
+  wrap.className = 'curve-wrap';
+
+  const canvas = document.createElement('canvas');
+  canvas.width = CURVE_SIZE; canvas.height = CURVE_SIZE;
+  canvas.className = 'curve-canvas';
+  wrap.appendChild(canvas);
+
+  const resetBtn = document.createElement('button');
+  resetBtn.className = 'btn btn-ghost curve-reset';
+  resetBtn.textContent = 'Kurve zurücksetzen';
+  resetBtn.addEventListener('click', () => {
+    layer.params[param.key] = [{ x: 0, y: 0 }, { x: 255, y: 255 }];
+    drawCurve(canvas, layer.params[param.key]);
+    scheduleRender();
+  });
+  wrap.appendChild(resetBtn);
+
+  canvas.addEventListener('mousedown', e => startCurveDrag(layer, param, canvas, e.clientX, e.clientY));
+  canvas.addEventListener('touchstart', e => {
+    const t = e.touches[0];
+    startCurveDrag(layer, param, canvas, t.clientX, t.clientY);
+    e.preventDefault();
+  }, { passive: false });
+
+  canvas.addEventListener('dblclick', e => {
+    const [cx, cy] = curveEventXY(canvas, e.clientX, e.clientY);
+    const pts = layer.params[param.key];
+    if (pts.length <= 2) return;
+    const [nearest, dist] = nearestCurvePoint(pts, cx, cy);
+    if (dist < 12 && nearest !== 0 && nearest !== pts.length - 1) {
+      pts.splice(nearest, 1);
+      drawCurve(canvas, pts);
+      scheduleRender();
+    }
+  });
+
+  drawCurve(canvas, layer.params[param.key]);
+  return wrap;
+}
+
+function startCurveDrag(layer, param, canvas, clientX, clientY) {
+  const pts = layer.params[param.key];
+  const [cx, cy] = curveEventXY(canvas, clientX, clientY);
+  const [nearest, dist] = nearestCurvePoint(pts, cx, cy);
+  if (dist < 12) {
+    curveDrag = { pts, index: nearest, canvas };
+  } else {
+    const [dx, dy] = curveToDataXY(cx, cy);
+    pts.push({ x: dx, y: dy });
+    pts.sort((a, b) => a.x - b.x);
+    const index = pts.findIndex(p => p.x === dx && p.y === dy);
+    curveDrag = { pts, index, canvas };
+    drawCurve(canvas, pts);
+    scheduleRender();
+  }
+}
+
+function moveCurveDrag(clientX, clientY) {
+  if (!curveDrag) return;
+  const { pts, index, canvas } = curveDrag;
+  const [cx, cy] = curveEventXY(canvas, clientX, clientY);
+  const [dx, dy] = curveToDataXY(cx, cy);
+  pts[index].y = dy;
+  if (index !== 0 && index !== pts.length - 1) {
+    pts[index].x = clamp(dx, pts[index - 1].x + 1, pts[index + 1].x - 1);
+  }
+  drawCurve(canvas, pts);
+  scheduleRender();
+}
+
+document.addEventListener('mousemove', e => moveCurveDrag(e.clientX, e.clientY));
+document.addEventListener('mouseup', () => { curveDrag = null; });
+document.addEventListener('touchmove', e => {
+  if (!curveDrag) return;
+  const t = e.touches[0];
+  moveCurveDrag(t.clientX, t.clientY);
+  e.preventDefault();
+}, { passive: false });
+document.addEventListener('touchend', () => { curveDrag = null; });
 
 async function render() {
   if (!originalImageData) return;

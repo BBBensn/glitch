@@ -51,6 +51,31 @@ function loadImage(src) {
   });
 }
 
+function hueToRgbChannel(p, q, t) {
+  if (t < 0) t += 1;
+  if (t > 1) t -= 1;
+  if (t < 1 / 6) return p + (q - p) * 6 * t;
+  if (t < 1 / 2) return q;
+  if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+  return p;
+}
+
+function hslToRgb(h, s, l) {
+  if (s === 0) { const v = l * 255; return [v, v, v]; }
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  return [
+    hueToRgbChannel(p, q, h + 1 / 3) * 255,
+    hueToRgbChannel(p, q, h) * 255,
+    hueToRgbChannel(p, q, h - 1 / 3) * 255,
+  ];
+}
+
+function hexToRgb(hex) {
+  const h = hex.replace('#', '');
+  return [parseInt(h.substring(0, 2), 16), parseInt(h.substring(2, 4), 16), parseInt(h.substring(4, 6), 16)];
+}
+
 const Effects = {};
 
 /* ── Pixel Sort ── */
@@ -288,6 +313,129 @@ Effects.wave = function (imageData, width, height, p) {
       const srcIdx = (srcY * width + srcX) * 4;
       data[dstIdx] = src[srcIdx]; data[dstIdx + 1] = src[srcIdx + 1];
       data[dstIdx + 2] = src[srcIdx + 2]; data[dstIdx + 3] = src[srcIdx + 3];
+    }
+  }
+};
+
+/* ── Basic Adjustments (Helligkeit / Kontrast / Sättigung) ── */
+Effects.basicAdjust = function (imageData, width, height, p) {
+  const data = imageData.data;
+  const brightness = p.brightness * 2.55;
+  const contrastFactor = (259 * (p.contrast + 255)) / (255 * (259 - p.contrast));
+  const satFactor = 1 + p.saturation / 100;
+
+  for (let i = 0; i < data.length; i += 4) {
+    let r = data[i] + brightness, g = data[i + 1] + brightness, b = data[i + 2] + brightness;
+    r = contrastFactor * (r - 128) + 128;
+    g = contrastFactor * (g - 128) + 128;
+    b = contrastFactor * (b - 128) + 128;
+    const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+    r = gray + (r - gray) * satFactor;
+    g = gray + (g - gray) * satFactor;
+    b = gray + (b - gray) * satFactor;
+    data[i] = clamp(r, 0, 255); data[i + 1] = clamp(g, 0, 255); data[i + 2] = clamp(b, 0, 255);
+  }
+};
+
+/* ── Tone Curve (Gradationskurve) ── */
+function catmullRom(p0, p1, p2, p3, t) {
+  const t2 = t * t, t3 = t2 * t;
+  return 0.5 * ((2 * p1) + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
+}
+
+Effects.buildCurveLUT = function (points) {
+  const pts = [...points].sort((a, b) => a.x - b.x);
+  const lut = new Uint8ClampedArray(256);
+  for (let x = 0; x < 256; x++) {
+    let i = 0;
+    while (i < pts.length - 2 && pts[i + 1].x < x) i++;
+    const p0 = pts[Math.max(0, i - 1)];
+    const p1 = pts[i];
+    const p2 = pts[Math.min(pts.length - 1, i + 1)];
+    const p3 = pts[Math.min(pts.length - 1, i + 2)];
+    const span = p2.x - p1.x;
+    const t = span === 0 ? 0 : clamp((x - p1.x) / span, 0, 1);
+    lut[x] = clamp(Math.round(catmullRom(p0.y, p1.y, p2.y, p3.y, t)), 0, 255);
+  }
+  return lut;
+};
+
+Effects.curve = function (imageData, width, height, p) {
+  const lut = Effects.buildCurveLUT(p.points);
+  const data = imageData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = lut[data[i]]; data[i + 1] = lut[data[i + 1]]; data[i + 2] = lut[data[i + 2]];
+  }
+};
+
+/* ── Color Overlay (Farbüberlagerung) ── */
+function overlayBlendChannel(base, blend) {
+  return base < 128 ? (2 * base * blend / 255) : (255 - 2 * (255 - base) * (255 - blend) / 255);
+}
+
+Effects.colorOverlay = function (imageData, width, height, p) {
+  const data = imageData.data;
+  const [orr, org, orb] = hexToRgb(p.color);
+  const amt = clamp(p.opacity, 0, 100) / 100;
+  const overlayHsl = p.blend === 'color' ? rgbToHsl(orr, org, orb) : null;
+
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i], g = data[i + 1], b = data[i + 2];
+    let nr, ng, nb;
+    switch (p.blend) {
+      case 'multiply': nr = r * orr / 255; ng = g * org / 255; nb = b * orb / 255; break;
+      case 'screen':
+        nr = 255 - (255 - r) * (255 - orr) / 255;
+        ng = 255 - (255 - g) * (255 - org) / 255;
+        nb = 255 - (255 - b) * (255 - orb) / 255;
+        break;
+      case 'overlay':
+        nr = overlayBlendChannel(r, orr); ng = overlayBlendChannel(g, org); nb = overlayBlendChannel(b, orb);
+        break;
+      case 'color': {
+        const l = rgbToHsl(r, g, b)[2];
+        [nr, ng, nb] = hslToRgb(overlayHsl[0], overlayHsl[1], l);
+        break;
+      }
+      default: nr = orr; ng = org; nb = orb;
+    }
+    data[i] = clamp(r + (nr - r) * amt, 0, 255);
+    data[i + 1] = clamp(g + (ng - g) * amt, 0, 255);
+    data[i + 2] = clamp(b + (nb - b) * amt, 0, 255);
+  }
+};
+
+/* ── Pixelation ── */
+Effects.pixelate = function (imageData, width, height, p) {
+  const src = new Uint8ClampedArray(imageData.data);
+  const data = imageData.data;
+  const bs = Math.max(2, Math.round(p.blockSize));
+  const rand = mulberry32(p.seed || 1);
+  const disp = clamp(p.displacement, 0, 100);
+
+  for (let by = 0; by < height; by += bs) {
+    for (let bx = 0; bx < width; bx += bs) {
+      const bw = Math.min(bs, width - bx), bh = Math.min(bs, height - by);
+      let sbx = bx, sby = by;
+      if (disp > 0 && rand() * 100 < disp) {
+        const maxShift = bs * 2;
+        sbx = clampInt(bx + Math.round((rand() - 0.5) * 2 * maxShift), 0, width - bw);
+        sby = clampInt(by + Math.round((rand() - 0.5) * 2 * maxShift), 0, height - bh);
+      }
+      let r = 0, g = 0, b = 0, count = 0;
+      for (let y = 0; y < bh; y++) {
+        for (let x = 0; x < bw; x++) {
+          const idx = ((sby + y) * width + (sbx + x)) * 4;
+          r += src[idx]; g += src[idx + 1]; b += src[idx + 2]; count++;
+        }
+      }
+      r = Math.round(r / count); g = Math.round(g / count); b = Math.round(b / count);
+      for (let y = 0; y < bh; y++) {
+        for (let x = 0; x < bw; x++) {
+          const idx = ((by + y) * width + (bx + x)) * 4;
+          data[idx] = r; data[idx + 1] = g; data[idx + 2] = b; data[idx + 3] = 255;
+        }
+      }
     }
   }
 };

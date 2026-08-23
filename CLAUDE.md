@@ -8,7 +8,7 @@ Projekt-spezifischer Kontext. Ergänzt `~/.claude/CLAUDE.md`.
 
 - **Name:** glitch
 - **Domain:** glitch.bensn.me
-- **Version:** v1.0.0
+- **Version:** v1.1.0
 - **Status:** active
 - **Stack:** Vanilla JS + Canvas API (rein clientseitig, kein Backend)
 
@@ -84,8 +84,8 @@ git push origin main
 - Effekt-Stack: beliebig viele Effekte hinzufügen, umsortieren (↑/↓), togglen, entfernen — Pipeline rendert bei jeder Parameteränderung neu vom Original-Bild aus
 - Effekte mit Zufallskomponente (Dithering "Random", Noise, Block Glitch) haben einen 🎲-Button zum Neu-Würfeln (fester Seed für Reproduzierbarkeit bis zum Reroll)
 
-**Effekte v1 (Bilder):**
-Pixel Sort, Dithering (Floyd–Steinberg / Atkinson / Bayer / Random), RGB Shift, Scanlines, Noise, Block Glitch, Posterize, Wave Distortion, JPEG Crunch, Invert
+**Effekte (Bilder):**
+Grundkorrektur (Helligkeit/Kontrast/Sättigung), Gradationskurve, Farbüberlagerung, Pixelation (mit Displacement), Pixel Sort, Dithering (Floyd–Steinberg / Atkinson / Bayer / Random), RGB Shift, Scanlines, Noise, Block Glitch, Posterize, Wave Distortion, JPEG Crunch, Invert
 
 ---
 
@@ -93,7 +93,7 @@ Pixel Sort, Dithering (Floyd–Steinberg / Atkinson / Bayer / Random), RGB Shift
 
 - Effekte sind reine Funktionen in `effects.js`: `(imageData, width, height, params) => void | ImageData` — mutieren entweder in-place oder geben neue ImageData zurück (z.B. `jpegCrunch`, da async über Canvas-Reencoding)
 - Neue Effekte registrieren: Eintrag in `EFFECT_DEFS` (app.js) mit `id`, `label`, `color`, `params`-Schema, `apply`-Funktion — UI generiert Controls automatisch aus dem Schema
-- Param-Typen: `range`, `select`, `checkbox`, `seed` (versteckt, nur 🎲-Button)
+- Param-Typen: `range`, `select`, `checkbox`, `color`, `curve` (interaktives Kurven-Widget, Punkte via Catmull-Rom interpoliert), `seed` (versteckt, nur 🎲-Button)
 
 ---
 
@@ -102,6 +102,7 @@ Pixel Sort, Dithering (Floyd–Steinberg / Atkinson / Bayer / Random), RGB Shift
 | Version | Feature | Status |
 |---------|---------|--------|
 | v1.0.0 | Bild-Editor: Pixelsort, Dithering, RGB-Shift, Scanlines, Noise, Block Glitch, Posterize, Wave, JPEG Crunch, Invert | ✅ done |
+| v1.1.0 | Basic-Editing: Grundkorrektur, Gradationskurve, Farbüberlagerung, Pixelation | ✅ done |
 | v2.0.0 | Video-Datamoshing (Upload → moshbares Format → I-Frame-Removal/Korruption → Export) | geplant |
 
 ---
