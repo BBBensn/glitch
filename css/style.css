@@ -55,6 +55,25 @@
   letter-spacing: 0.02em;
 }
 
+/* ── Mode switch ── */
+.mode-switch {
+  display: inline-flex;
+  gap: 0.4rem;
+  margin-top: 1rem;
+}
+.mode-tab {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  text-decoration: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.35rem 0.9rem;
+  transition: border-color 0.15s, color 0.15s;
+}
+.mode-tab:hover { border-color: var(--border-hover); color: var(--text); }
+.mode-tab.active { color: var(--text); border-color: var(--accent-blue); background: rgba(0,166,251,0.08); }
+
 /* ── Editor layout ── */
 .editor {
   display: grid;
@@ -348,4 +367,69 @@ input[type="range"]::-moz-range-thumb {
 @media (max-width: 560px) {
   .upload-zone { padding: 3rem 1rem; }
   .glitch-mark { font-size: 1.5rem; }
+}
+
+/* ── Video mode ── */
+.editor-main.has-video .upload-zone { display: none; }
+.video-stage { display: none; }
+.editor-main.has-video .video-stage { display: block; }
+
+.video-status {
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  padding: 3rem 1rem;
+  border: 1px dashed var(--border);
+  border-radius: 16px;
+}
+
+.timeline {
+  display: none;
+  width: 100%;
+  height: 70px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.timeline-legend {
+  display: flex;
+  gap: 1.25rem;
+  margin-top: 0.6rem;
+  font-family: 'DM Mono', monospace;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.timeline-legend span { display: flex; align-items: center; gap: 5px; }
+.legend-dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.legend-i { background: #00A6FB; }
+.legend-p { background: #33333f; }
+.legend-drop { background: rgba(255,0,81,0.35); }
+
+.video-preview {
+  display: none;
+  width: 100%;
+  border-radius: 12px;
+  margin-top: 1.25rem;
+  background: #000;
+}
+
+.timeline-hint {
+  font-family: 'DM Mono', monospace;
+  font-size: 10.5px;
+  color: var(--muted);
+  line-height: 1.6;
+  padding: 0.5rem 0.1rem;
+}
+
+.render-btn, .download-btn {
+  width: 100%;
+  margin-top: 0.75rem;
+}
+.render-btn:disabled, .download-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
