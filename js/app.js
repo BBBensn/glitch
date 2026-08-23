@@ -31,6 +31,19 @@ const EFFECT_DEFS = [
     ],
   },
   {
+    id: 'gradientOverlay', label: 'Verlaufsüberlagerung', color: '#c026d3',
+    apply: Effects.gradientOverlay,
+    params: [
+      { key: 'colorStart', label: 'Farbe 1', type: 'color', default: '#00A6FB' },
+      { key: 'colorEnd', label: 'Farbe 2', type: 'color', default: '#FF0051' },
+      { key: 'angle', label: 'Winkel (°)', type: 'range', min: 0, max: 360, step: 1, default: 45 },
+      { key: 'blend', label: 'Modus', type: 'select', default: 'normal',
+        options: [['normal', 'Normal'], ['multiply', 'Multiplizieren'], ['screen', 'Negativ multiplizieren'],
+                  ['overlay', 'Ineinanderkopieren'], ['color', 'Farbton']] },
+      { key: 'opacity', label: 'Deckkraft', type: 'range', min: 0, max: 100, step: 1, default: 50 },
+    ],
+  },
+  {
     id: 'pixelate', label: 'Pixelation', color: '#2dd4bf',
     apply: Effects.pixelate,
     params: [

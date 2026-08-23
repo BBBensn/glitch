@@ -102,44 +102,56 @@ function dmAssemble(headerBytes, frameChunks) {
   return out;
 }
 
-/* The actual mosh: drop I-frames from cutPoint onward (classic "remove the
-   keyframe" smear), optionally repeat the P-frame window right before the
-   cut (freeze/drag), optionally corrupt bytes in P-frames after the cut. */
-Datamosh.mosh = function (parsed, opts) {
-  const frames = parsed.frames;
-  const cutPoint = opts.cutPoint;
-
-  let sequence = [];
-  for (let i = 0; i < frames.length; i++) {
-    if (i > 0 && frames[i].type === 0 && i >= cutPoint) continue; // drop I-frame
-    sequence.push(i);
+/* Which frame indices from one clip's trimmed range [inFrame,outFrame] make
+   it into the merged output. Frame 0 of the very first clip is always kept
+   as a valid decode reference; every other I-frame at/after clip.cutPoint
+   gets dropped — for the first clip that creates an internal melt partway
+   through, for a later clip it makes that clip inherit the previous clip's
+   stale reference from the moment it starts (the classic two-video morph). */
+Datamosh.selectClipFrames = function (clip, isFirstClip) {
+  const frames = clip.parsed.frames;
+  let start = clip.inFrame;
+  if (isFirstClip) {
+    while (start > 0 && frames[start].type !== 0) start--; // snap to a valid I-frame reference
   }
-
-  if (opts.dupCount > 0 && opts.dupWindow > 0) {
-    const windowStart = Math.max(0, cutPoint - opts.dupWindow);
-    const windowEnd = Math.max(0, cutPoint - 1);
-    const windowIdx = sequence.filter(i => i >= windowStart && i <= windowEnd);
-    if (windowIdx.length > 0) {
-      const insertAt = sequence.indexOf(windowEnd) + 1;
-      const repeated = [];
-      for (let r = 0; r < opts.dupCount; r++) repeated.push(...windowIdx);
-      sequence = [...sequence.slice(0, insertAt), ...repeated, ...sequence.slice(insertAt)];
-    }
+  const selected = [];
+  for (let i = start; i <= clip.outFrame; i++) {
+    const isVeryFirst = isFirstClip && i === start;
+    if (frames[i].type === 0 && i >= clip.cutPoint && !isVeryFirst) continue;
+    selected.push(i);
   }
+  return selected;
+};
 
+/* Merge N trimmed clips back-to-back and mosh them: I-frames dropped per
+   clip.cutPoint, the tail of each clip (except the last) optionally
+   repeated before the cut into the next clip, P-frames at/after each
+   clip's cutPoint optionally byte-corrupted. */
+Datamosh.mergeAndMosh = function (clips, opts) {
   const rand = dmMulberry32(opts.seed || 1);
   const prob = clamp(opts.noiseIntensity, 0, 100) / 100 * 0.15;
-  const chunks = [];
-  for (const idx of sequence) {
-    const f = frames[idx];
-    let data = parsed.bytes.slice(f.offset, f.offset + f.size);
-    if (prob > 0 && f.type === 1 && idx >= cutPoint) {
-      for (let b = 16; b < data.length; b++) {
-        if (rand() < prob) data[b] = (rand() * 256) | 0;
-      }
-    }
-    chunks.push(data);
-  }
+  const allChunks = [];
 
-  return dmAssemble(parsed.headerBytes, chunks);
+  clips.forEach((clip, ci) => {
+    const isFirst = ci === 0;
+    const idxList = Datamosh.selectClipFrames(clip, isFirst);
+    const clipChunks = idxList.map(i => {
+      const f = clip.parsed.frames[i];
+      const data = clip.parsed.bytes.slice(f.offset, f.offset + f.size);
+      if (prob > 0 && f.type === 1 && i >= clip.cutPoint) {
+        for (let b = 16; b < data.length; b++) {
+          if (rand() < prob) data[b] = (rand() * 256) | 0;
+        }
+      }
+      return data;
+    });
+    allChunks.push(...clipChunks);
+
+    if (ci < clips.length - 1 && opts.dupCount > 0 && opts.dupWindow > 0) {
+      const tail = clipChunks.slice(-opts.dupWindow);
+      for (let r = 0; r < opts.dupCount; r++) allChunks.push(...tail);
+    }
+  });
+
+  return dmAssemble(clips[0].parsed.headerBytes, allChunks);
 };

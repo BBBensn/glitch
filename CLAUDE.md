@@ -8,7 +8,7 @@ Projekt-spezifischer Kontext. Ergänzt `~/.claude/CLAUDE.md`.
 
 - **Name:** glitch
 - **Domain:** glitch.bensn.me
-- **Version:** v2.0.0
+- **Version:** v2.1.0
 - **Status:** active
 - **Stack:** Vanilla JS + Canvas API (Foto-Modus, clientseitig, kein Backend) + Flask/ffmpeg-Backend (Video-Modus, Port 5007)
 
@@ -98,25 +98,38 @@ git push origin main
 - Effekte mit Zufallskomponente (Dithering "Random", Noise, Block Glitch) haben einen 🎲-Button zum Neu-Würfeln (fester Seed für Reproduzierbarkeit bis zum Reroll)
 
 **Effekte (Bilder):**
-Grundkorrektur (Helligkeit/Kontrast/Sättigung), Gradationskurve, Farbüberlagerung, Pixelation (mit Displacement), Pixel Sort, Dithering (Floyd–Steinberg / Atkinson / Bayer / Random), RGB Shift, Scanlines, Noise, Block Glitch, Posterize, Wave Distortion, JPEG Crunch, Invert
+Grundkorrektur (Helligkeit/Kontrast/Sättigung), Gradationskurve, Farbüberlagerung, Verlaufsüberlagerung, Pixelation (mit Displacement), Pixel Sort, Dithering (Floyd–Steinberg / Atkinson / Bayer / Random), RGB Shift, Scanlines, Noise, Block Glitch, Posterize, Wave Distortion, JPEG Crunch, Invert
+
+Farbüberlagerung und Verlaufsüberlagerung teilen sich die Blend-Modi-Logik (`blendChannels()` in effects.js: normal/multiply/screen/overlay/color) — neue Blend-Modi dort zentral ergänzen.
 
 ---
 
-## Video-Modus: echtes Datamoshing
+## Video-Modus: echtes Datamoshing (Multi-Clip-Merge)
 
-**Prinzip:** kein Filter-Effekt, sondern echte Byte-Manipulation am MPEG-4-Bitstream (AVI-Container) — I-Frames werden aus dem Rohdatenstrom entfernt, wodurch der Decoder P-Frame-Bewegungsvektoren auf veraltete Referenzframes anwendet ("melt/smear"-Effekt). Genau die Technik, die Avidemux & Co. auch nutzen.
+**Prinzip:** kein Filter-Effekt, sondern echte Byte-Manipulation am MPEG-4-Bitstream (AVI-Container) — I-Frames werden aus dem Rohdatenstrom entfernt, wodurch der Decoder P-Frame-Bewegungsvektoren auf veraltete Referenzframes anwendet ("melt/smear"-Effekt). Der Effekt wirkt am stärksten beim Fusionieren zweier unterschiedlicher Clips (Video A meltet in Video B), deshalb ist das UI um mehrere Clips herum gebaut, nicht um ein einzelnes Video.
 
-**Pipeline:**
-1. **Prepare (Server, `/api/glitch/prepare`):** Upload → ffmpeg transcodiert zu einem "moshbaren" AVI (`mpeg4`/xvid-Codec, 480px breit, 15fps, `-g 15` → alle ~1s ein I-Frame, keine B-Frames, max. 20s). Läuft server-seitig, weil ein echter Encoder gebraucht wird.
-2. **Parse + Mosh (Client, `datamosh.js`):** Reines JS liest die RIFF/AVI-Struktur, erkennt I-/P-Frames über den VOP-Start-Code (`0x000001B6`, Typ-Bits danach), und baut anhand der UI-Parameter eine neue Byte-Sequenz:
-   - **Cut-Point** (Drag auf der Timeline): alle I-Frames ab dieser Position werden entfernt → Kernstück des Effekts
-   - **Wiederhol-Fenster/-Anzahl**: die P-Frames direkt vor dem Cut-Point werden N-mal wiederholt (Freeze/Drag-Effekt)
-   - **Byte-Rauschen**: zufällige Bytes in P-Frames nach dem Cut-Point werden korrumpiert (Intensität 0–100 → 0–15% Flip-Wahrscheinlichkeit)
-   - Frame 0 (erster I-Frame) wird nie entfernt — sonst hat der Decoder keine Referenz und alles bricht
-   - Kein Header-Patching nötig (dwTotalFrames/idx1 werden nicht korrigiert) — ffmpeg liest das trotzdem sauber, da es movi einfach scannt (empirisch getestet)
-3. **Render (Server, `/api/glitch/render`):** der korrumpierte AVI-Byte-Stream wird hochgeladen, ffmpeg dekodiert ihn (toleriert die fehlenden I-Frames) und encodet zu H.264/MP4 für Vorschau + Download. Kein Live-Preview ohne Server-Roundtrip möglich, da Browser kein rohes MPEG-4/AVI abspielen können.
+**Workflow:**
+1. Beliebig viele Videos hochladen (`+ Video hinzufügen`, Mehrfachauswahl oder Drag&Drop) — jedes wird einzeln server-seitig zu einem moshbaren AVI transkodiert (`/api/glitch/prepare`: mpeg4/xvid, 480px breit, 15fps, `-g 15` → alle ~1s ein I-Frame, keine B-Frames, max. 20s pro Clip)
+2. Jeder Clip bekommt eine eigene Mini-Timeline (Canvas) mit drei Drag-Handles:
+   - **In/Out** (orange): trimmt den Clip
+   - **Cut-Point** (rote Linie): ab hier werden I-Frames *dieses* Clips entfernt
+3. Reihenfolge der Clips per ↑/↓ festlegen — das ist die Reihenfolge im fertigen Video
+4. Globale Parameter (Wiederhol-Fenster/-Anzahl, Byte-Rauschen) gelten an jedem Clip-Übergang
+5. "Ohne Moshing ansehen" rendert dieselbe Clip-Abfolge sauber verkettet (kein Frame entfernt) — Referenz-Vorschau
+6. "Vorschau rendern" moshed wirklich
 
-**Warum kein ffmpeg.wasm:** die Byte-Manipulation selbst ist reines JS (schnell, interaktiv, kein Encoder nötig). Nur die zwei Encode/Decode-Schritte brauchen einen echten Codec — dafür reicht ein schlanker Server-Endpoint, ohne WASM-Overhead im Browser.
+**Kernlogik (`datamosh.js`, `Datamosh.selectClipFrames` + `Datamosh.mergeAndMosh`):**
+- Für den **ersten** Clip wird der Start immer auf das nächste I-Frame ≤ inFrame zurückgesetzt (`isFirstClip` snapt), damit der Decoder am Anfang eine gültige Referenz hat — dessen allererstes Frame wird nie entfernt, egal wo der Cut-Point steht
+- Für **spätere** Clips wird *nicht* gesnapt — der Clip startet bewusst mitten in seiner eigenen GOP, ohne eigenes I-Frame (per Default: Cut-Point = Clip-Start = sofortiger Morph). Dadurch erbt er beim Decodieren die "eingefrorene" Referenz des vorigen Clips → der eigentliche Morph-Effekt zwischen zwei Videos
+- Innerhalb eines Clips ab `cutPoint`: alle I-Frames raus (klassischer interner Melt, funktioniert auch mit nur einem einzigen Clip genau wie die alte Version)
+- Wiederhol-Fenster: die letzten N Frames eines Clips (vor dem Übergang zum nächsten) werden M-mal wiederholt (Freeze/Drag)
+- Byte-Rauschen: zufällige Bytes in P-Frames ab `cutPoint` korrumpiert (0–100 → 0–15% Flip-Wahrscheinlichkeit)
+- Alle Clips müssen mit identischen ffmpeg-Settings (`prepare`) transkodiert sein, sonst sind die VOL-Parameter (Auflösung/Codec-Profil) inkompatibel — deshalb läuft *jeder* Upload durch denselben `/api/glitch/prepare`-Aufruf
+- Kein Header-Patching nötig (dwTotalFrames/idx1 werden nicht korrigiert) — ffmpeg liest das trotzdem sauber, da es `movi` einfach scannt (empirisch gegen echtes ffmpeg getestet, bevor der Parser gebaut wurde)
+
+**Render (Server, `/api/glitch/render`):** der zusammengebaute/korrumpierte AVI-Byte-Stream wird hochgeladen, ffmpeg dekodiert ihn (toleriert die fehlenden I-Frames) und encodet zu H.264/MP4 für Vorschau + Download. Kein Live-Preview ohne Server-Roundtrip möglich, da Browser kein rohes MPEG-4/AVI abspielen können.
+
+**Warum kein ffmpeg.wasm:** die Byte-Manipulation selbst ist reines JS (schnell, interaktiv, kein Encoder nötig). Nur Encode (prepare) und Decode (render) brauchen einen echten Codec — dafür reicht ein schlanker Server-Endpoint, ohne WASM-Overhead im Browser.
 
 ---
 
@@ -146,6 +159,8 @@ ffmpeg wurde für dieses Projekt via `apt install ffmpeg` auf dem Server install
 | v1.0.0 | Bild-Editor: Pixelsort, Dithering, RGB-Shift, Scanlines, Noise, Block Glitch, Posterize, Wave, JPEG Crunch, Invert | ✅ done |
 | v1.1.0 | Basic-Editing: Grundkorrektur, Gradationskurve, Farbüberlagerung, Pixelation | ✅ done |
 | v2.0.0 | Video-Datamoshing: Server-Backend (ffmpeg) + clientseitige AVI-Byte-Manipulation | ✅ done |
+| v2.1.0 | Video: Multi-Clip-Merge (mehrere Videos fusionieren) statt Einzelvideo; Foto: Verlaufsüberlagerung | ✅ done |
+| v2.2.0 | Foto: Masken-Funktion (Kreis/Rechteck/Pen-Tool, Effekte nur in ausgewähltem Bereich anwenden) | geplant |
 
 ---
 

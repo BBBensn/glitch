@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>glitch · video · bensn.me</title>
-<meta name="description" content="Echtes Datamoshing: I-Frames entfernen, Frames wiederholen, Bytes korrumpieren.">
+<meta name="description" content="Echtes Datamoshing: mehrere Clips fusionieren, I-Frames entfernen, Frames wiederholen, Bytes korrumpieren.">
 <meta name="theme-color" content="#0a0a0b">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;500;700;800&display=swap" rel="stylesheet">
@@ -29,7 +29,7 @@
 
   <div class="eyebrow-row">
     <div class="glitch-mark" data-text="GLITCH">GLITCH</div>
-    <div class="eyebrow-sub">Echtes Datamoshing — I-Frame-Removal, Frame-Repeat, Byte-Korruption</div>
+    <div class="eyebrow-sub">Echtes Datamoshing — Clips fusionieren, I-Frames entfernen, Frames wiederholen</div>
     <div class="mode-switch">
       <a href="index.html" class="mode-tab">Foto</a>
       <span class="mode-tab active">Video</span>
@@ -39,7 +39,7 @@
   <div class="editor">
     <div class="editor-main" id="editorArea">
       <div class="toolbar">
-        <button class="btn" id="newVideoBtn">Neues Video</button>
+        <button class="btn" id="addVideoBtn">+ Video hinzufügen</button>
         <div class="toolbar-spacer"></div>
         <span class="dim-text" id="dimText"></span>
       </div>
@@ -49,25 +49,19 @@
           <path d="M12 16V4M12 4L7 9M12 4l5 5" stroke-linecap="round" stroke-linejoin="round"/>
           <path d="M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
-        <div class="upload-title">Video hierher ziehen oder klicken</div>
-        <div class="upload-sub">MP4, MOV, WebM — max. 20s werden verwendet, wird auf 480px skaliert</div>
+        <div class="upload-title">Videos hierher ziehen oder klicken</div>
+        <div class="upload-sub">Mehrfachauswahl möglich — max. 20s pro Clip werden verwendet, wird auf 480px skaliert</div>
       </div>
 
-      <div class="video-stage" id="videoStage">
-        <div class="video-status" id="prepStatus">Wird vorbereitet…</div>
-        <canvas id="timeline" class="timeline"></canvas>
-        <div class="timeline-legend">
-          <span><i class="legend-dot legend-i"></i> I-Frame</span>
-          <span><i class="legend-dot legend-p"></i> P-Frame</span>
-          <span><i class="legend-dot legend-drop"></i> wird entfernt</span>
-        </div>
-        <video id="preview" class="video-preview" controls playsinline></video>
-      </div>
+      <div class="clip-list" id="clipList"></div>
+
+      <video id="preview" class="video-preview" controls playsinline></video>
     </div>
 
     <div class="sidebar">
-      <div class="sidebar-header">Datamosh-Parameter</div>
+      <div class="sidebar-header">Datamosh-Parameter (an jedem Clip-Übergang)</div>
       <div class="effect-stack" id="controls"></div>
+      <button class="btn clean-btn" id="cleanBtn" disabled>Ohne Moshing ansehen</button>
       <button class="btn btn-primary render-btn" id="renderBtn" disabled>Vorschau rendern</button>
       <button class="btn download-btn" id="downloadBtn" disabled>Download MP4</button>
     </div>
@@ -75,7 +69,7 @@
 
 </div>
 
-<input type="file" id="fileInput" accept="video/*" hidden>
+<input type="file" id="fileInput" accept="video/*" multiple hidden>
 
 <script src="js/datamosh.js"></script>
 <script src="js/video-app.js"></script>

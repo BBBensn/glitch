@@ -377,31 +377,63 @@ Effects.colorOverlay = function (imageData, width, height, p) {
   const data = imageData.data;
   const [orr, org, orb] = hexToRgb(p.color);
   const amt = clamp(p.opacity, 0, 100) / 100;
-  const overlayHsl = p.blend === 'color' ? rgbToHsl(orr, org, orb) : null;
 
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i], g = data[i + 1], b = data[i + 2];
-    let nr, ng, nb;
-    switch (p.blend) {
-      case 'multiply': nr = r * orr / 255; ng = g * org / 255; nb = b * orb / 255; break;
-      case 'screen':
-        nr = 255 - (255 - r) * (255 - orr) / 255;
-        ng = 255 - (255 - g) * (255 - org) / 255;
-        nb = 255 - (255 - b) * (255 - orb) / 255;
-        break;
-      case 'overlay':
-        nr = overlayBlendChannel(r, orr); ng = overlayBlendChannel(g, org); nb = overlayBlendChannel(b, orb);
-        break;
-      case 'color': {
-        const l = rgbToHsl(r, g, b)[2];
-        [nr, ng, nb] = hslToRgb(overlayHsl[0], overlayHsl[1], l);
-        break;
-      }
-      default: nr = orr; ng = org; nb = orb;
-    }
+    const [nr, ng, nb] = blendChannels(r, g, b, orr, org, orb, p.blend);
     data[i] = clamp(r + (nr - r) * amt, 0, 255);
     data[i + 1] = clamp(g + (ng - g) * amt, 0, 255);
     data[i + 2] = clamp(b + (nb - b) * amt, 0, 255);
+  }
+};
+
+function blendChannels(r, g, b, orr, org, orb, mode) {
+  switch (mode) {
+    case 'multiply': return [r * orr / 255, g * org / 255, b * orb / 255];
+    case 'screen': return [
+      255 - (255 - r) * (255 - orr) / 255,
+      255 - (255 - g) * (255 - org) / 255,
+      255 - (255 - b) * (255 - orb) / 255,
+    ];
+    case 'overlay': return [overlayBlendChannel(r, orr), overlayBlendChannel(g, org), overlayBlendChannel(b, orb)];
+    case 'color': {
+      const l = rgbToHsl(r, g, b)[2];
+      const [h, s] = rgbToHsl(orr, org, orb);
+      return hslToRgb(h, s, l);
+    }
+    default: return [orr, org, orb];
+  }
+}
+
+/* ── Gradient Overlay (Verlaufsüberlagerung) ── */
+Effects.gradientOverlay = function (imageData, width, height, p) {
+  const data = imageData.data;
+  const [r1, g1, b1] = hexToRgb(p.colorStart);
+  const [r2, g2, b2] = hexToRgb(p.colorEnd);
+  const amt = clamp(p.opacity, 0, 100) / 100;
+  const rad = (p.angle || 0) * Math.PI / 180;
+  const dx = Math.cos(rad), dy = Math.sin(rad);
+
+  const corners = [[0, 0], [width, 0], [0, height], [width, height]];
+  let min = Infinity, max = -Infinity;
+  for (const [cx, cy] of corners) {
+    const proj = cx * dx + cy * dy;
+    if (proj < min) min = proj;
+    if (proj > max) max = proj;
+  }
+  const span = (max - min) || 1;
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = (y * width + x) * 4;
+      const t = clamp(((x * dx + y * dy) - min) / span, 0, 1);
+      const orr = r1 + (r2 - r1) * t, org = g1 + (g2 - g1) * t, orb = b1 + (b2 - b1) * t;
+      const r = data[idx], g = data[idx + 1], b = data[idx + 2];
+      const [nr, ng, nb] = blendChannels(r, g, b, orr, org, orb, p.blend);
+      data[idx] = clamp(r + (nr - r) * amt, 0, 255);
+      data[idx + 1] = clamp(g + (ng - g) * amt, 0, 255);
+      data[idx + 2] = clamp(b + (nb - b) * amt, 0, 255);
+    }
   }
 };
 
