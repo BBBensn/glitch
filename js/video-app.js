@@ -388,6 +388,16 @@ downloadBtn.addEventListener('click', () => {
   URL.revokeObjectURL(url);
 });
 
+/* ── Info modal ── */
+const infoBtn = document.getElementById('infoBtn');
+const infoModal = document.getElementById('infoModal');
+const closeInfoBtn = document.getElementById('closeInfoBtn');
+
+infoBtn.addEventListener('click', () => infoModal.classList.add('open'));
+closeInfoBtn.addEventListener('click', () => infoModal.classList.remove('open'));
+infoModal.addEventListener('click', e => { if (e.target === infoModal) infoModal.classList.remove('open'); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') infoModal.classList.remove('open'); });
+
 buildControls();
 updateButtons();
 setStatus('idle', 'bereit');

@@ -186,6 +186,109 @@
   color: var(--muted);
   margin-bottom: 0.75rem;
 }
+.sidebar-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.sidebar-header-row .sidebar-header { margin-bottom: 0.75rem; flex: 1; }
+
+.info-btn {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  margin-top: -0.6rem;
+  border-radius: 50%;
+  border: 1px solid var(--border-hover);
+  background: transparent;
+  color: var(--muted);
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.info-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
+
+/* ── Info modal ── */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(4px);
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+.modal-overlay.open { display: flex; }
+
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border-hover);
+  border-radius: 16px;
+  max-width: 560px;
+  width: 100%;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.modal-header h2 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.modal-body {
+  padding: 1.25rem 1.5rem 1.75rem;
+  overflow-y: auto;
+  color: var(--text);
+  font-size: 0.88rem;
+  line-height: 1.65;
+}
+.modal-body h3 {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-blue);
+  margin: 1.5rem 0 0.6rem;
+}
+.modal-body h3:first-child { margin-top: 0; }
+.modal-body p { margin-bottom: 0.75rem; color: var(--muted); }
+.modal-body strong { color: var(--text); font-weight: 700; }
+.modal-body em { color: var(--text); font-style: normal; }
+.modal-body ol { margin: 0 0 0.75rem 1.1rem; color: var(--muted); }
+.modal-body ol li { margin-bottom: 0.4rem; }
+.modal-body dl { margin: 0; }
+.modal-body dt {
+  font-weight: 700;
+  color: var(--text);
+  margin-top: 0.85rem;
+}
+.modal-body dd {
+  margin: 0.2rem 0 0;
+  color: var(--muted);
+}
+.modal-tldr {
+  margin-top: 1.5rem;
+  padding: 0.85rem 1rem;
+  border: 1px dashed var(--border-hover);
+  border-radius: 10px;
+  color: var(--text) !important;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.8rem;
+}
 select {
   width: 100%;
   font-family: 'DM Mono', monospace;

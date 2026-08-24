@@ -59,7 +59,10 @@
     </div>
 
     <div class="sidebar">
-      <div class="sidebar-header">Datamosh-Parameter (an jedem Clip-Übergang)</div>
+      <div class="sidebar-header-row">
+        <div class="sidebar-header">Datamosh-Parameter (an jedem Clip-Übergang)</div>
+        <button class="info-btn" id="infoBtn" title="Wie funktioniert Datamoshing?">?</button>
+      </div>
       <div class="effect-stack" id="controls"></div>
       <button class="btn clean-btn" id="cleanBtn" disabled>Ohne Moshing ansehen</button>
       <button class="btn btn-primary render-btn" id="renderBtn" disabled>Vorschau rendern</button>
@@ -67,6 +70,45 @@
     </div>
   </div>
 
+</div>
+
+<div class="modal-overlay" id="infoModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Wie funktioniert Datamoshing?</h2>
+      <button class="icon-btn" id="closeInfoBtn" title="Schließen">✕</button>
+    </div>
+    <div class="modal-body">
+
+      <h3>Das Prinzip</h3>
+      <p>Videos speichern nicht jedes Bild einzeln. Ab und zu gibt es ein <strong>I-Frame</strong> (ein komplettes Bild), dazwischen viele <strong>P-Frames</strong>, die nur die <em>Änderung</em> zum vorigen Frame speichern — Bewegungsvektoren plus Differenz. Normalerweise reicht das, weil der Decoder nach jedem I-Frame wieder eine saubere Referenz hat.</p>
+      <p>Datamoshing trickst genau das aus: fehlt ein I-Frame, hat der Decoder für die folgenden P-Frames keine gültige Referenz mehr. Er nimmt stattdessen das letzte Bild, das er noch im Speicher hat, und wendet die neuen Bewegungsvektoren trotzdem darauf an. Das alte Bild wird dadurch verschmiert und verzogen, während sich die neue Bewegung durchsetzt. Genau dieser Dekodier-Fehler <em>ist</em> der Effekt — kein Filter, echte Bit-Manipulation.</p>
+
+      <h3>Wie du einen guten Übergang bekommst</h3>
+      <p>Der Effekt wirkt am stärksten, wenn zwei <strong>unterschiedliche</strong> Videos ineinander morphen. Ein einzelnes Video meltet nur in sich selbst — schon cool, aber weniger dramatisch.</p>
+      <ol>
+        <li>Lade zwei (oder mehr) Clips hoch.</li>
+        <li>Beim <strong>zweiten Clip</strong> steht der Cut-Point (rote Linie) standardmäßig direkt am Anfang — dadurch übernimmt Clip 2 sofort die eingefrorene letzte Ansicht von Clip 1 und meltet vom ersten Frame an rein.</li>
+        <li>Schiebst du den Cut-Point weiter nach rechts, spielt Clip 2 erst ein Stück sauber ab, bevor er zu melten beginnt.</li>
+        <li>Beim <strong>ersten Clip</strong> bewirkt der Cut-Point etwas anderes: alles davor bleibt sauber, ab da meltet der Clip in sich selbst — funktioniert auch ganz ohne zweiten Clip.</li>
+      </ol>
+
+      <h3>Was die Regler tun</h3>
+      <dl>
+        <dt>Cut-Point (rote Linie)</dt>
+        <dd>Ab dieser Position werden alle I-Frames <em>dieses Clips</em> entfernt. Das ist der eigentliche Schalter für den Effekt — bleibt er am Standardwert stehen (Ende bei Clip 1, Anfang bei späteren Clips), passiert dort nichts Zusätzliches.</dd>
+        <dt>In/Out (orange)</dt>
+        <dd>Schneidet den Clip vorne/hinten zu, unabhängig vom Moshing.</dd>
+        <dt>Wiederhol-Fenster + Wiederholungen</dt>
+        <dd>Kurz bevor ein Clip zum nächsten wechselt, werden die letzten paar Frames (Fenster, in Frames) mehrfach wiederholt (Wiederholungen, Anzahl). Das erzeugt einen kurzen Stotter-/Freeze-Effekt direkt am Übergang, bevor der Melt einsetzt — verstärkt das Ziehen/Draggen.</dd>
+        <dt>Byte-Rauschen</dt>
+        <dd>Zufällige Bytes in den P-Frames nach dem Cut-Point werden verändert. Sorgt für zusätzliches visuelles Rauschen/Chaos in den bereits gemoshten Bereichen — je höher, desto kaputter. Bei sehr hohen Werten kann das Rendern fehlschlagen (Fehlermeldung, einfach Intensität reduzieren).</dd>
+      </dl>
+
+      <p class="modal-tldr">Kurz gesagt: kein verschobener Cut-Point = kein Effekt. Zwei sehr unterschiedliche Clips mit dem Cut-Point von Clip 2 am Anfang = maximaler Morph.</p>
+
+    </div>
+  </div>
 </div>
 
 <input type="file" id="fileInput" accept="video/*" multiple hidden>

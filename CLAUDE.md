@@ -8,7 +8,7 @@ Projekt-spezifischer Kontext. Ergänzt `~/.claude/CLAUDE.md`.
 
 - **Name:** glitch
 - **Domain:** glitch.bensn.me
-- **Version:** v2.1.0
+- **Version:** v2.1.1
 - **Status:** active
 - **Stack:** Vanilla JS + Canvas API (Foto-Modus, clientseitig, kein Backend) + Flask/ffmpeg-Backend (Video-Modus, Port 5007)
 
@@ -160,6 +160,7 @@ ffmpeg wurde für dieses Projekt via `apt install ffmpeg` auf dem Server install
 | v1.1.0 | Basic-Editing: Grundkorrektur, Gradationskurve, Farbüberlagerung, Pixelation | ✅ done |
 | v2.0.0 | Video-Datamoshing: Server-Backend (ffmpeg) + clientseitige AVI-Byte-Manipulation | ✅ done |
 | v2.1.0 | Video: Multi-Clip-Merge (mehrere Videos fusionieren) statt Einzelvideo; Foto: Verlaufsüberlagerung | ✅ done |
+| v2.1.1 | Video: Info-Modal erklärt Datamoshing-Prinzip und alle Regler | ✅ done |
 | v2.2.0 | Foto: Masken-Funktion (Kreis/Rechteck/Pen-Tool, Effekte nur in ausgewähltem Bereich anwenden) | geplant |
 
 ---
