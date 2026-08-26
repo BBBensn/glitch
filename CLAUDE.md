@@ -8,7 +8,7 @@ Projekt-spezifischer Kontext. Ergänzt `~/.claude/CLAUDE.md`.
 
 - **Name:** glitch
 - **Domain:** glitch.bensn.me
-- **Version:** v2.1.1
+- **Version:** v2.2.0
 - **Status:** active
 - **Stack:** Vanilla JS + Canvas API (Foto-Modus, clientseitig, kein Backend) + Flask/ffmpeg-Backend (Video-Modus, Port 5007)
 
@@ -93,9 +93,10 @@ git push origin main
 ## Design & Effekte (Foto-Modus)
 
 - Nutzt Shared Design System (`https://bensn.me/shared/bensn.css`, Syne/DM Mono Fonts, App-Navbar-Pattern)
-- Bild wird beim Upload auf max. 1600px Kantenlänge herunterskaliert (Performance bei Pixel Sort etc.)
-- Effekt-Stack: beliebig viele Effekte hinzufügen, umsortieren (↑/↓), togglen, entfernen — Pipeline rendert bei jeder Parameteränderung neu vom Original-Bild aus
+- Bild wird beim Upload auf max. 1600px Kantenlänge herunterskaliert fürs *Editieren* (Performance bei Pixel Sort etc.) — das Original-`<img>` bleibt in `sourceImage` erhalten
+- Effekt-Stack: beliebig viele Effekte hinzufügen, umsortieren (↑/↓ **oder Drag&Drop** am ⠿-Handle), togglen, entfernen — Pipeline rendert bei jeder Parameteränderung neu vom Original-Bild aus
 - Effekte mit Zufallskomponente (Dithering "Random", Noise, Block Glitch) haben einen 🎲-Button zum Neu-Würfeln (fester Seed für Reproduzierbarkeit bis zum Reroll)
+- **Export in voller Qualität:** Download rendert die komplette Effekt-Pipeline neu gegen `sourceImage` bei bis zu `EXPORT_MAX_DIM` (4000px), nicht bei der 1600px-Editier-Auflösung. Params mit `scalesWithResolution: true` (z.B. `blockSize`, `amplitude`, RGB-Shift `amount`, Scanline `spacing`/`thickness`) werden dabei proportional zum Auflösungs-Verhältnis hochskaliert (`scaleParams()`), damit der Export optisch genau wie die Vorschau aussieht, nur schärfer. Neuer Foto-Effekt mit Pixel-Maßen? `scalesWithResolution: true` am Param nicht vergessen.
 
 **Effekte (Bilder):**
 Grundkorrektur (Helligkeit/Kontrast/Sättigung), Gradationskurve, Farbüberlagerung, Verlaufsüberlagerung, Pixelation (mit Displacement), Pixel Sort, Dithering (Floyd–Steinberg / Atkinson / Bayer / Random), RGB Shift, Scanlines, Noise, Block Glitch, Posterize, Wave Distortion, JPEG Crunch, Invert
@@ -131,6 +132,10 @@ Farbüberlagerung und Verlaufsüberlagerung teilen sich die Blend-Modi-Logik (`b
 
 **Warum kein ffmpeg.wasm:** die Byte-Manipulation selbst ist reines JS (schnell, interaktiv, kein Encoder nötig). Nur Encode (prepare) und Decode (render) brauchen einen echten Codec — dafür reicht ein schlanker Server-Endpoint, ohne WASM-Overhead im Browser.
 
+**Grundkorrektur (Helligkeit/Kontrast/Sättigung):** anders als bei Fotos gibt es hier keine Pixel-Effekt-Pipeline (die Bytes sind komprimierte MPEG4-Daten, kein RGB) — läuft stattdessen als ffmpeg `eq`-Filter im `/api/glitch/render`-Schritt (`brightness`/`contrast`/`saturation` als Form-Felder, serverseitig geclamped).
+
+**Export in hoher Qualität:** die editierte Mosh-Entscheidung (In/Out, Cut-Point, Wiederhol-/Rausch-Parameter) ist immer eine Liste von Frame-*Indizes* — die bleibt gültig, egal bei welcher Auflösung ein Clip encodiert wurde, solange FPS/GOP gleich bleiben (nur `-vf scale` ändert sich). Deshalb: `/api/glitch/prepare` nimmt jetzt einen optionalen `width`-Parameter (Default 480, Cap 1920). Der "Exportieren"-Button im Frontend behält das Original-`File` jedes Clips (`clip.file`), re-prepared bei Klick alle Clips in der gewählten Export-Auflösung (720p/1080p), wendet dieselben Trim/Cut-Point-Werte an (defensiv auf neue Frame-Anzahl geclampt, falls sie doch abweicht) und rendert mit `crf=16` statt `20`. Deutlich langsamer als "Vorschau rendern" (mehrere Server-Roundtrips), aber nur nötig beim finalen Export.
+
 ---
 
 ## Server & Ports
@@ -161,7 +166,9 @@ ffmpeg wurde für dieses Projekt via `apt install ffmpeg` auf dem Server install
 | v2.0.0 | Video-Datamoshing: Server-Backend (ffmpeg) + clientseitige AVI-Byte-Manipulation | ✅ done |
 | v2.1.0 | Video: Multi-Clip-Merge (mehrere Videos fusionieren) statt Einzelvideo; Foto: Verlaufsüberlagerung | ✅ done |
 | v2.1.1 | Video: Info-Modal erklärt Datamoshing-Prinzip und alle Regler | ✅ done |
-| v2.2.0 | Foto: Masken-Funktion (Kreis/Rechteck/Pen-Tool, Effekte nur in ausgewähltem Bereich anwenden) | geplant |
+| v2.2.0 | Foto: Drag&Drop-Reordering, Export in voller Auflösung; Video: Grundkorrektur, Export in 720p/1080p | ✅ done |
+| v2.3.0 | Foto: Mehrere Bilder als Ebenen überlagern (klassische Blend-Modi, Deckkraft, "Neue Leinwand" für Collagen) | geplant |
+| v2.4.0 | Foto: Crop pro Ebene/Komposition, Masken-Funktion (Kreis/Rechteck/Pen-Tool, Effekte nur in ausgewähltem Bereich anwenden) | geplant |
 
 ---
 

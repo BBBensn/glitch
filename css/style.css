@@ -324,15 +324,26 @@ select:hover { border-color: var(--border-hover); }
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 0.85rem;
-  transition: opacity 0.15s;
+  transition: opacity 0.15s, border-color 0.15s, transform 0.15s;
 }
 .effect-card.disabled { opacity: 0.45; }
+.effect-card.dragging { opacity: 0.35; }
+.effect-card.drag-over { border-color: var(--accent-blue); transform: translateY(1px); }
 
 .effect-header {
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
+.drag-handle {
+  color: var(--muted);
+  cursor: grab;
+  font-size: 13px;
+  line-height: 1;
+  flex-shrink: 0;
+  touch-action: none;
+}
+.drag-handle:active { cursor: grabbing; }
 .effect-title {
   font-size: 0.85rem;
   font-weight: 700;
@@ -571,6 +582,24 @@ input[type="range"]::-moz-range-thumb {
   margin-top: 0.75rem;
 }
 .clean-btn:disabled, .render-btn:disabled, .download-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.export-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.export-row select {
+  margin-bottom: 0;
+  flex: 1;
+  min-width: 0;
+}
+.export-row .btn {
+  flex-shrink: 0;
+}
+.export-row .btn:disabled {
   opacity: 0.4;
   cursor: default;
 }

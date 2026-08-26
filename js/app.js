@@ -47,7 +47,7 @@ const EFFECT_DEFS = [
     id: 'pixelate', label: 'Pixelation', color: '#2dd4bf',
     apply: Effects.pixelate,
     params: [
-      { key: 'blockSize', label: 'Blockgröße (px)', type: 'range', min: 2, max: 100, step: 1, default: 20 },
+      { key: 'blockSize', label: 'Blockgröße (px)', type: 'range', min: 2, max: 100, step: 1, default: 20, scalesWithResolution: true },
       { key: 'displacement', label: 'Displacement', type: 'range', min: 0, max: 100, step: 1, default: 0 },
       { key: 'seed', label: '', type: 'seed', default: 1 },
     ],
@@ -82,7 +82,7 @@ const EFFECT_DEFS = [
     id: 'rgbshift', label: 'RGB Shift', color: '#6622cc',
     apply: Effects.rgbShift,
     params: [
-      { key: 'amount', label: 'Stärke (px)', type: 'range', min: 0, max: 60, step: 1, default: 8 },
+      { key: 'amount', label: 'Stärke (px)', type: 'range', min: 0, max: 60, step: 1, default: 8, scalesWithResolution: true },
       { key: 'angle', label: 'Winkel (°)', type: 'range', min: 0, max: 360, step: 1, default: 0 },
     ],
   },
@@ -90,8 +90,8 @@ const EFFECT_DEFS = [
     id: 'scanlines', label: 'Scanlines', color: '#00d4d4',
     apply: Effects.scanlines,
     params: [
-      { key: 'spacing', label: 'Abstand (px)', type: 'range', min: 2, max: 20, step: 1, default: 4 },
-      { key: 'thickness', label: 'Dicke (px)', type: 'range', min: 1, max: 10, step: 1, default: 1 },
+      { key: 'spacing', label: 'Abstand (px)', type: 'range', min: 2, max: 20, step: 1, default: 4, scalesWithResolution: true },
+      { key: 'thickness', label: 'Dicke (px)', type: 'range', min: 1, max: 10, step: 1, default: 1, scalesWithResolution: true },
       { key: 'opacity', label: 'Deckkraft', type: 'range', min: 0, max: 1, step: 0.05, default: 0.5 },
     ],
   },
@@ -108,9 +108,9 @@ const EFFECT_DEFS = [
     id: 'blockglitch', label: 'Block Glitch', color: '#f96f5d',
     apply: Effects.blockGlitch,
     params: [
-      { key: 'blockSize', label: 'Blockgröße (px)', type: 'range', min: 2, max: 100, step: 1, default: 16 },
+      { key: 'blockSize', label: 'Blockgröße (px)', type: 'range', min: 2, max: 100, step: 1, default: 16, scalesWithResolution: true },
       { key: 'intensity', label: 'Intensität', type: 'range', min: 0, max: 100, step: 1, default: 30 },
-      { key: 'maxShift', label: 'Max. Versatz (px)', type: 'range', min: 1, max: 200, step: 1, default: 40 },
+      { key: 'maxShift', label: 'Max. Versatz (px)', type: 'range', min: 1, max: 200, step: 1, default: 40, scalesWithResolution: true },
       { key: 'seed', label: '', type: 'seed', default: 1 },
     ],
   },
@@ -127,7 +127,7 @@ const EFFECT_DEFS = [
     params: [
       { key: 'direction', label: 'Richtung', type: 'select', default: 'horizontal',
         options: [['horizontal', 'Horizontal'], ['vertical', 'Vertikal']] },
-      { key: 'amplitude', label: 'Amplitude (px)', type: 'range', min: 1, max: 100, step: 1, default: 15 },
+      { key: 'amplitude', label: 'Amplitude (px)', type: 'range', min: 1, max: 100, step: 1, default: 15, scalesWithResolution: true },
       { key: 'frequency', label: 'Frequenz', type: 'range', min: 0.01, max: 0.3, step: 0.01, default: 0.05 },
     ],
   },
@@ -158,6 +158,9 @@ const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
 const dimText = document.getElementById('dimText');
 
+const EXPORT_MAX_DIM = 4000;
+
+let sourceImage = null;
 let originalImageData = null;
 let width = 0, height = 0;
 let stack = [];
@@ -217,6 +220,19 @@ function renderStackUI() {
     const header = document.createElement('div');
     header.className = 'effect-header';
 
+    const handle = document.createElement('span');
+    handle.className = 'drag-handle';
+    handle.title = 'Ziehen zum Umsortieren';
+    handle.textContent = '⠿';
+    handle.draggable = true;
+    handle.addEventListener('dragstart', e => {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(layer.uid));
+      card.classList.add('dragging');
+    });
+    handle.addEventListener('dragend', () => card.classList.remove('dragging'));
+    header.appendChild(handle);
+
     const title = document.createElement('div');
     title.className = 'effect-title';
     title.innerHTML = `<span class="effect-dot"></span>${def.label}`;
@@ -261,6 +277,21 @@ function renderStackUI() {
 
     header.appendChild(actions);
     card.appendChild(header);
+
+    card.addEventListener('dragover', e => { e.preventDefault(); card.classList.add('drag-over'); });
+    card.addEventListener('dragleave', () => card.classList.remove('drag-over'));
+    card.addEventListener('drop', e => {
+      e.preventDefault();
+      card.classList.remove('drag-over');
+      const draggedUid = Number(e.dataTransfer.getData('text/plain'));
+      const fromIndex = stack.findIndex(l => l.uid === draggedUid);
+      const toIndex = stack.findIndex(l => l.uid === layer.uid);
+      if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return;
+      const [moved] = stack.splice(fromIndex, 1);
+      stack.splice(toIndex, 0, moved);
+      renderStackUI();
+      scheduleRender();
+    });
 
     const body = document.createElement('div');
     body.className = 'effect-body';
@@ -512,6 +543,7 @@ async function scheduleRender() {
 }
 
 function setupCanvasFromImage(img) {
+  sourceImage = img;
   let w = img.naturalWidth, h = img.naturalHeight;
   if (Math.max(w, h) > MAX_DIM) {
     const scale = MAX_DIM / Math.max(w, h);
@@ -581,16 +613,63 @@ document.getElementById('randomBtn').addEventListener('click', () => {
   scheduleRender();
 });
 
-document.getElementById('downloadBtn').addEventListener('click', () => {
-  if (!originalImageData) return;
-  canvas.toBlob(blob => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `glitch-${Date.now()}.png`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, 'image/png');
+function scaleParams(def, params, factor) {
+  if (factor === 1) return params;
+  const out = { ...params };
+  for (const p of def.params) {
+    if (p.scalesWithResolution && typeof out[p.key] === 'number') {
+      out[p.key] = out[p.key] * factor;
+    }
+  }
+  return out;
+}
+
+async function renderAtResolution(imgEl, targetW, targetH) {
+  const c = document.createElement('canvas');
+  c.width = targetW; c.height = targetH;
+  const cx = c.getContext('2d', { willReadFrequently: true });
+  cx.drawImage(imgEl, 0, 0, targetW, targetH);
+  let imgData = cx.getImageData(0, 0, targetW, targetH);
+  const factor = targetW / width;
+  for (const layer of stack) {
+    if (!layer.enabled) continue;
+    const def = EFFECT_DEFS.find(d => d.id === layer.defId);
+    const params = scaleParams(def, layer.params, factor);
+    const result = await def.apply(imgData, targetW, targetH, params);
+    if (result) imgData = result;
+  }
+  cx.putImageData(imgData, 0, 0);
+  return c;
+}
+
+document.getElementById('downloadBtn').addEventListener('click', async () => {
+  if (!originalImageData || !sourceImage) return;
+  const btn = document.getElementById('downloadBtn');
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Exportiert…';
+  setStatus('busy', 'exportiert in voller Qualität…');
+
+  try {
+    let fullW = sourceImage.naturalWidth, fullH = sourceImage.naturalHeight;
+    if (Math.max(fullW, fullH) > EXPORT_MAX_DIM) {
+      const scale = EXPORT_MAX_DIM / Math.max(fullW, fullH);
+      fullW = Math.round(fullW * scale); fullH = Math.round(fullH * scale);
+    }
+    const exportCanvas = await renderAtResolution(sourceImage, fullW, fullH);
+    exportCanvas.toBlob(blob => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `glitch-${Date.now()}.png`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }, 'image/png');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+    setStatus('ready', 'bereit');
+  }
 });
 
 populateAddEffectSelect();

@@ -11,13 +11,14 @@ import uuid
 from flask import Flask, request, send_file, jsonify
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 150 * 1024 * 1024  # 150MB upload cap
+app.config['MAX_CONTENT_LENGTH'] = 400 * 1024 * 1024  # 400MB upload cap (high-res re-prepare for export)
 
 MAX_DURATION = 20      # seconds taken from the source clip
-PREPARE_WIDTH = 480    # moshable proxy resolution (kept small: fast + small payloads)
+DEFAULT_WIDTH = 480    # moshable proxy resolution while editing (fast + small payloads)
+MAX_WIDTH = 1920       # cap for high-quality export re-prepare
 PREPARE_FPS = 15
-GOP = 15               # keyframe every ~1s -> several I-frames to mosh with
-FFMPEG_TIMEOUT = 90
+GOP = 15                # keyframe every ~1s -> several I-frames to mosh with
+FFMPEG_TIMEOUT = 120
 
 ALLOWED_EXT = {'.mp4', '.mov', '.avi', '.webm', '.mkv', '.m4v', '.gif'}
 
@@ -31,6 +32,10 @@ def run_ffmpeg(args):
         raise RuntimeError(proc.stderr.decode('utf-8', errors='replace')[-1500:])
 
 
+def clamp(value, lo, hi):
+    return max(lo, min(hi, value))
+
+
 @app.route('/api/glitch/prepare', methods=['POST'])
 def prepare():
     if 'video' not in request.files:
@@ -39,6 +44,11 @@ def prepare():
     ext = os.path.splitext(f.filename or '')[1].lower()
     if ext not in ALLOWED_EXT:
         return jsonify(error='Nicht unterstütztes Format.'), 400
+
+    try:
+        width = clamp(int(request.form.get('width', DEFAULT_WIDTH)), 240, MAX_WIDTH)
+    except ValueError:
+        width = DEFAULT_WIDTH
 
     with tempfile.TemporaryDirectory(prefix='glitch-') as tmp:
         in_path = os.path.join(tmp, f'in{ext}')
@@ -49,7 +59,7 @@ def prepare():
             run_ffmpeg([
                 '-i', in_path,
                 '-t', str(MAX_DURATION),
-                '-vf', f'scale={PREPARE_WIDTH}:-2:flags=fast_bilinear',
+                '-vf', f'scale={width}:-2:flags=fast_bilinear',
                 '-r', str(PREPARE_FPS),
                 '-c:v', 'mpeg4', '-vtag', 'xvid', '-q:v', '4',
                 '-g', str(GOP), '-bf', '0',
@@ -74,20 +84,28 @@ def render():
         return jsonify(error='Keine Datei erhalten.'), 400
     f = request.files['video']
 
+    try:
+        brightness = clamp(float(request.form.get('brightness', 0)), -100, 100) / 100
+        contrast = 1 + clamp(float(request.form.get('contrast', 0)), -100, 100) / 100
+        saturation = 1 + clamp(float(request.form.get('saturation', 0)), -100, 100) / 100
+    except ValueError:
+        brightness, contrast, saturation = 0, 1, 1
+
+    crf = '16' if request.form.get('quality') == 'high' else '20'
+
     with tempfile.TemporaryDirectory(prefix='glitch-') as tmp:
         in_path = os.path.join(tmp, 'in.avi')
         out_path = os.path.join(tmp, f'{uuid.uuid4().hex}.mp4')
         f.save(in_path)
 
+        args = ['-fflags', '+genpts+igndts', '-i', in_path]
+        if brightness != 0 or contrast != 1 or saturation != 1:
+            args += ['-vf', f'eq=brightness={brightness}:contrast={contrast}:saturation={saturation}']
+        args += ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', crf,
+                  '-pix_fmt', 'yuv420p', '-movflags', '+faststart', out_path]
+
         try:
-            run_ffmpeg([
-                '-fflags', '+genpts+igndts',
-                '-i', in_path,
-                '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
-                '-pix_fmt', 'yuv420p',
-                '-movflags', '+faststart',
-                out_path,
-            ])
+            run_ffmpeg(args)
         except RuntimeError as e:
             return jsonify(error=f'Rendern fehlgeschlagen — evtl. zu stark korrumpiert: {e}'), 500
         except subprocess.TimeoutExpired:

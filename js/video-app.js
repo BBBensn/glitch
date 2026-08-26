@@ -24,7 +24,10 @@ let clips = [];
 let uidCounter = 1;
 let renderedBlob = null;
 let activeClipDrag = null; // { clip, target: 'in'|'out'|'cut', canvas, isFirst, draw }
-const globalParams = { dupWindow: 0, dupCount: 0, noiseIntensity: 0, seed: 1 };
+const globalParams = {
+  dupWindow: 0, dupCount: 0, noiseIntensity: 0, seed: 1,
+  brightness: 0, contrast: 0, saturation: 0,
+};
 
 function setStatus(state, text) {
   statusDot.dataset.state = state;
@@ -35,7 +38,7 @@ function setStatus(state, text) {
 function addClip(file) {
   if (!file || !file.type.startsWith('video/')) return;
   const wasFirst = clips.length === 0;
-  const clip = { uid: uidCounter++, name: file.name, parsed: null, error: null };
+  const clip = { uid: uidCounter++, name: file.name, file, parsed: null, error: null };
   clips.push(clip);
   renderClipList();
   updateButtons();
@@ -86,6 +89,7 @@ function updateButtons() {
   const validCount = clips.filter(c => c.parsed).length;
   renderBtn.disabled = validCount === 0;
   cleanBtn.disabled = validCount === 0;
+  exportBtn.disabled = validCount === 0;
   uploadZone.style.display = clips.length === 0 ? 'block' : 'none';
   dimText.textContent = validCount > 0 ? `${validCount} Clip${validCount > 1 ? 's' : ''}` : '';
 }
@@ -287,9 +291,23 @@ function buildSlider(label, min, max, step, value, onInput) {
 
 function buildControls() {
   controlsEl.innerHTML = '';
+
+  const colorCard = document.createElement('div');
+  colorCard.className = 'effect-card';
+  colorCard.style.setProperty('--accent', '#facc15');
+  const colorBody = document.createElement('div');
+  colorBody.className = 'effect-body';
+  colorBody.style.marginTop = '0'; colorBody.style.paddingTop = '0'; colorBody.style.borderTop = 'none';
+  colorBody.appendChild(buildSlider('Helligkeit', -100, 100, 1, globalParams.brightness, v => globalParams.brightness = v));
+  colorBody.appendChild(buildSlider('Kontrast', -100, 100, 1, globalParams.contrast, v => globalParams.contrast = v));
+  colorBody.appendChild(buildSlider('Sättigung', -100, 100, 1, globalParams.saturation, v => globalParams.saturation = v));
+  colorCard.appendChild(colorBody);
+  controlsEl.appendChild(colorCard);
+
   const card = document.createElement('div');
   card.className = 'effect-card';
   card.style.setProperty('--accent', '#FF0051');
+  card.style.marginTop = '0.6rem';
 
   const body = document.createElement('div');
   body.className = 'effect-body';
@@ -348,6 +366,9 @@ function doRender(clean) {
 
   const form = new FormData();
   form.append('video', new Blob([moshed], { type: 'video/x-msvideo' }), 'moshed.avi');
+  form.append('brightness', globalParams.brightness);
+  form.append('contrast', globalParams.contrast);
+  form.append('saturation', globalParams.saturation);
 
   fetch(`${API_BASE}/render`, { method: 'POST', body: form })
     .then(async res => {
@@ -386,6 +407,87 @@ downloadBtn.addEventListener('click', () => {
   a.download = `glitch-mosh-${Date.now()}.mp4`;
   a.click();
   URL.revokeObjectURL(url);
+});
+
+/* ── High-quality export (re-prepares each clip at a higher resolution,
+   re-applies the same trim/cut-point/mosh decisions — frame indices stay
+   valid since fps/GOP don't depend on width — then renders at higher CRF) ── */
+const qualitySelect = document.getElementById('qualitySelect');
+const exportBtn = document.getElementById('exportBtn');
+
+function reprepareClip(clip, width) {
+  const form = new FormData();
+  form.append('video', clip.file);
+  form.append('width', width);
+  return fetch(`${API_BASE}/prepare`, { method: 'POST', body: form })
+    .then(async res => {
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Unbekannter Fehler' }));
+        throw new Error(`${clip.name}: ${err.error || `HTTP ${res.status}`}`);
+      }
+      return res.arrayBuffer();
+    })
+    .then(buffer => {
+      const parsed = Datamosh.parse(buffer);
+      const n = parsed.frames.length;
+      return {
+        parsed,
+        inFrame: clamp(clip.inFrame, 0, n - 1),
+        outFrame: clamp(clip.outFrame, 1, n - 1),
+        cutPoint: clamp(clip.cutPoint, 0, n),
+      };
+    });
+}
+
+exportBtn.addEventListener('click', () => {
+  const validClips = clips.filter(c => c.parsed && c.file);
+  if (validClips.length === 0) return;
+  const width = parseInt(qualitySelect.value, 10);
+
+  const originalText = exportBtn.textContent;
+  exportBtn.disabled = true;
+  exportBtn.textContent = 'Exportiert…';
+  setStatus('busy', 'exportiert…');
+
+  Promise.all(validClips.map(c => reprepareClip(c, width)))
+    .then(clipsForMerge => {
+      const moshed = Datamosh.mergeAndMosh(clipsForMerge, { ...globalParams });
+      const form = new FormData();
+      form.append('video', new Blob([moshed], { type: 'video/x-msvideo' }), 'moshed.avi');
+      form.append('brightness', globalParams.brightness);
+      form.append('contrast', globalParams.contrast);
+      form.append('saturation', globalParams.saturation);
+      form.append('quality', 'high');
+      return fetch(`${API_BASE}/render`, { method: 'POST', body: form });
+    })
+    .then(async res => {
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Unbekannter Fehler' }));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      return res.blob();
+    })
+    .then(blob => {
+      renderedBlob = blob;
+      preview.src = URL.createObjectURL(blob);
+      preview.style.display = 'block';
+      downloadBtn.disabled = false;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `glitch-mosh-${width}p-${Date.now()}.mp4`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setStatus('ready', 'bereit');
+    })
+    .catch(err => {
+      alert(`Export fehlgeschlagen: ${err.message}`);
+      setStatus('ready', 'bereit');
+    })
+    .finally(() => {
+      exportBtn.disabled = clips.filter(c => c.parsed).length === 0;
+      exportBtn.textContent = originalText;
+    });
 });
 
 /* ── Info modal ── */
