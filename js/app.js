@@ -154,22 +154,42 @@ const editorArea = document.getElementById('editorArea');
 const canvasStage = document.getElementById('canvasStage');
 const effectStackEl = document.getElementById('effectStack');
 const addEffectSelect = document.getElementById('addEffectSelect');
+const layerListEl = document.getElementById('layerList');
+const activeLayerLabel = document.getElementById('activeLayerLabel');
 const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
 const dimText = document.getElementById('dimText');
 
 const EXPORT_MAX_DIM = 4000;
 
-let sourceImage = null;
-let originalImageData = null;
-let width = 0, height = 0;
-let stack = [];
+const BLEND_MODES = [
+  ['source-over', 'Normal'], ['multiply', 'Multiplizieren'], ['screen', 'Negativ multiplizieren'],
+  ['overlay', 'Ineinanderkopieren'], ['darken', 'Abdunkeln'], ['lighten', 'Aufhellen'],
+  ['color-dodge', 'Farbig abwedeln'], ['color-burn', 'Farbig nachbelichten'],
+  ['hard-light', 'Hartes Licht'], ['soft-light', 'Weiches Licht'],
+  ['difference', 'Differenz'], ['exclusion', 'Ausschluss'],
+  ['hue', 'Farbton'], ['saturation', 'Sättigung'], ['color', 'Farbe'], ['luminosity', 'Luminanz'],
+];
+
+let canvasW = 0, canvasH = 0, canvasBg = 'white';
+let layers = []; // bottom -> top
+let activeLayerId = null;
 let uidCounter = 1;
 let isRendering = false, pending = false;
+let layerDrag = null; // { layer, offsetX, offsetY } — dragging a layer's position on the canvas
 
 function setStatus(state, text) {
   statusDot.dataset.state = state;
   statusText.textContent = text;
+}
+
+function getActiveLayer() {
+  return layers.find(l => l.uid === activeLayerId) || null;
+}
+
+function markActiveLayerDirty() {
+  const layer = getActiveLayer();
+  if (layer) layer.dirty = true;
 }
 
 function defaultParams(def) {
@@ -192,17 +212,160 @@ function populateAddEffectSelect() {
 
 addEffectSelect.addEventListener('change', () => {
   const defId = addEffectSelect.value;
-  if (!defId) return;
+  const layer = getActiveLayer();
+  if (!defId || !layer) return;
   const def = EFFECT_DEFS.find(d => d.id === defId);
-  stack.push({ uid: uidCounter++, defId, params: defaultParams(def), enabled: true });
+  layer.stack.push({ uid: uidCounter++, defId, params: defaultParams(def), enabled: true });
   addEffectSelect.value = '';
+  layer.dirty = true;
   renderStackUI();
   scheduleRender();
 });
 
+/* ── Layers panel ── */
+function renderLayerList() {
+  layerListEl.innerHTML = '';
+  layers.forEach((layer, index) => {
+    const card = document.createElement('div');
+    card.className = 'layer-card';
+    if (layer.uid === activeLayerId) card.classList.add('active');
+    if (!layer.visible) card.classList.add('hidden-layer');
+
+    const header = document.createElement('div');
+    header.className = 'layer-header';
+
+    const handle = document.createElement('span');
+    handle.className = 'drag-handle';
+    handle.title = 'Ziehen zum Umsortieren';
+    handle.textContent = '⠿';
+    handle.draggable = true;
+    handle.addEventListener('dragstart', e => {
+      e.stopPropagation();
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(layer.uid));
+      card.classList.add('dragging');
+    });
+    handle.addEventListener('dragend', () => card.classList.remove('dragging'));
+    header.appendChild(handle);
+
+    const visBtn = document.createElement('button');
+    visBtn.className = 'icon-btn'; visBtn.title = layer.visible ? 'Ausblenden' : 'Einblenden';
+    visBtn.textContent = layer.visible ? '👁' : '🚫';
+    visBtn.addEventListener('click', e => { e.stopPropagation(); layer.visible = !layer.visible; renderLayerList(); scheduleRender(); });
+    header.appendChild(visBtn);
+
+    const title = document.createElement('div');
+    title.className = 'layer-title';
+    title.textContent = layer.name;
+    header.appendChild(title);
+
+    const actions = document.createElement('div');
+    actions.className = 'layer-actions';
+    const up = document.createElement('button');
+    up.className = 'icon-btn'; up.title = 'Nach oben'; up.textContent = '↑'; up.disabled = index === layers.length - 1;
+    up.addEventListener('click', e => { e.stopPropagation(); [layers[index + 1], layers[index]] = [layers[index], layers[index + 1]]; renderLayerList(); scheduleRender(); });
+    actions.appendChild(up);
+    const down = document.createElement('button');
+    down.className = 'icon-btn'; down.title = 'Nach unten'; down.textContent = '↓'; down.disabled = index === 0;
+    down.addEventListener('click', e => { e.stopPropagation(); [layers[index - 1], layers[index]] = [layers[index], layers[index - 1]]; renderLayerList(); scheduleRender(); });
+    actions.appendChild(down);
+    const remove = document.createElement('button');
+    remove.className = 'icon-btn danger'; remove.title = 'Entfernen'; remove.textContent = '✕';
+    remove.addEventListener('click', e => {
+      e.stopPropagation();
+      layers = layers.filter(l => l.uid !== layer.uid);
+      if (activeLayerId === layer.uid) activeLayerId = layers.length ? layers[layers.length - 1].uid : null;
+      renderLayerList(); renderStackUI(); scheduleRender();
+    });
+    actions.appendChild(remove);
+    header.appendChild(actions);
+    card.appendChild(header);
+
+    const body = document.createElement('div');
+    body.className = 'layer-body';
+
+    const blendSelect = document.createElement('select');
+    for (const [val, text] of BLEND_MODES) {
+      const opt = document.createElement('option');
+      opt.value = val; opt.textContent = text;
+      if (val === layer.blendMode) opt.selected = true;
+      blendSelect.appendChild(opt);
+    }
+    blendSelect.addEventListener('click', e => e.stopPropagation());
+    blendSelect.addEventListener('change', () => { layer.blendMode = blendSelect.value; scheduleRender(); });
+    body.appendChild(blendSelect);
+
+    body.appendChild(buildInlineSlider('Deckkraft', 0, 100, 1, layer.opacity, v => { layer.opacity = v; scheduleRender(); }));
+    body.appendChild(buildInlineSlider('Größe', 10, 300, 1, Math.round(layer.scalePct), v => { resizeLayer(layer, v); scheduleRender(); }));
+
+    card.appendChild(body);
+
+    card.addEventListener('click', () => { activeLayerId = layer.uid; renderLayerList(); renderStackUI(); });
+
+    card.addEventListener('dragover', e => { e.preventDefault(); card.classList.add('drag-over'); });
+    card.addEventListener('dragleave', () => card.classList.remove('drag-over'));
+    card.addEventListener('drop', e => {
+      e.preventDefault();
+      card.classList.remove('drag-over');
+      const draggedUid = Number(e.dataTransfer.getData('text/plain'));
+      const fromIndex = layers.findIndex(l => l.uid === draggedUid);
+      const toIndex = layers.findIndex(l => l.uid === layer.uid);
+      if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return;
+      const [moved] = layers.splice(fromIndex, 1);
+      layers.splice(toIndex, 0, moved);
+      renderLayerList();
+      scheduleRender();
+    });
+
+    layerListEl.appendChild(card);
+  });
+
+  const active = getActiveLayer();
+  activeLayerLabel.textContent = active ? active.name : '–';
+}
+
+function buildInlineSlider(label, min, max, step, value, onInput) {
+  const row = document.createElement('div');
+  row.className = 'param-row';
+  const labelRow = document.createElement('div');
+  labelRow.className = 'param-label-row';
+  const lbl = document.createElement('span'); lbl.className = 'param-label'; lbl.textContent = label;
+  const val = document.createElement('span'); val.className = 'param-value'; val.textContent = value;
+  labelRow.append(lbl, val);
+  const input = document.createElement('input');
+  input.type = 'range'; input.min = min; input.max = max; input.step = step; input.value = value;
+  input.addEventListener('click', e => e.stopPropagation());
+  input.addEventListener('input', () => {
+    const v = parseFloat(input.value);
+    val.textContent = Math.round(v);
+    onInput(v);
+  });
+  row.append(labelRow, input);
+  return row;
+}
+
+function resizeLayer(layer, scalePct) {
+  const scale = scalePct / 100;
+  const cx = layer.x + layer.w / 2, cy = layer.y + layer.h / 2;
+  const w = layer.baseW * scale, h = layer.baseH * scale;
+  layer.w = w; layer.h = h;
+  layer.x = cx - w / 2; layer.y = cy - h / 2;
+  layer.scalePct = scalePct;
+}
+
+/* ── Effect stack (of the active layer) ── */
 function renderStackUI() {
   effectStackEl.innerHTML = '';
-  if (stack.length === 0) {
+  const layer = getActiveLayer();
+  if (!layer) {
+    const empty = document.createElement('div');
+    empty.className = 'stack-empty';
+    empty.textContent = 'Keine Ebene ausgewählt.';
+    effectStackEl.appendChild(empty);
+    return;
+  }
+  const fxStack = layer.stack;
+  if (fxStack.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'stack-empty';
     empty.textContent = 'Noch keine Effekte — oben hinzufügen.';
@@ -210,12 +373,12 @@ function renderStackUI() {
     return;
   }
 
-  stack.forEach((layer, index) => {
-    const def = EFFECT_DEFS.find(d => d.id === layer.defId);
+  fxStack.forEach((fx, index) => {
+    const def = EFFECT_DEFS.find(d => d.id === fx.defId);
     const card = document.createElement('div');
     card.className = 'effect-card';
     card.style.setProperty('--accent', def.color);
-    if (!layer.enabled) card.classList.add('disabled');
+    if (!fx.enabled) card.classList.add('disabled');
 
     const header = document.createElement('div');
     header.className = 'effect-header';
@@ -227,7 +390,7 @@ function renderStackUI() {
     handle.draggable = true;
     handle.addEventListener('dragstart', e => {
       e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', String(layer.uid));
+      e.dataTransfer.setData('text/plain', String(fx.uid));
       card.classList.add('dragging');
     });
     handle.addEventListener('dragend', () => card.classList.remove('dragging'));
@@ -246,8 +409,8 @@ function renderStackUI() {
       const dice = document.createElement('button');
       dice.className = 'icon-btn'; dice.title = 'Neu würfeln'; dice.textContent = '🎲';
       dice.addEventListener('click', () => {
-        for (const p of def.params) if (p.type === 'seed') layer.params[p.key] = Math.floor(Math.random() * 1e9);
-        scheduleRender();
+        for (const p of def.params) if (p.type === 'seed') fx.params[p.key] = Math.floor(Math.random() * 1e9);
+        markActiveLayerDirty(); scheduleRender();
       });
       actions.appendChild(dice);
     }
@@ -255,24 +418,24 @@ function renderStackUI() {
     const up = document.createElement('button');
     up.className = 'icon-btn'; up.title = 'Nach oben'; up.textContent = '↑';
     up.disabled = index === 0;
-    up.addEventListener('click', () => { [stack[index - 1], stack[index]] = [stack[index], stack[index - 1]]; renderStackUI(); scheduleRender(); });
+    up.addEventListener('click', () => { [fxStack[index - 1], fxStack[index]] = [fxStack[index], fxStack[index - 1]]; markActiveLayerDirty(); renderStackUI(); scheduleRender(); });
     actions.appendChild(up);
 
     const down = document.createElement('button');
     down.className = 'icon-btn'; down.title = 'Nach unten'; down.textContent = '↓';
-    down.disabled = index === stack.length - 1;
-    down.addEventListener('click', () => { [stack[index + 1], stack[index]] = [stack[index], stack[index + 1]]; renderStackUI(); scheduleRender(); });
+    down.disabled = index === fxStack.length - 1;
+    down.addEventListener('click', () => { [fxStack[index + 1], fxStack[index]] = [fxStack[index], fxStack[index + 1]]; markActiveLayerDirty(); renderStackUI(); scheduleRender(); });
     actions.appendChild(down);
 
     const toggle = document.createElement('button');
-    toggle.className = 'icon-btn'; toggle.title = layer.enabled ? 'Deaktivieren' : 'Aktivieren';
-    toggle.textContent = layer.enabled ? '⏵' : '⏸';
-    toggle.addEventListener('click', () => { layer.enabled = !layer.enabled; renderStackUI(); scheduleRender(); });
+    toggle.className = 'icon-btn'; toggle.title = fx.enabled ? 'Deaktivieren' : 'Aktivieren';
+    toggle.textContent = fx.enabled ? '⏵' : '⏸';
+    toggle.addEventListener('click', () => { fx.enabled = !fx.enabled; markActiveLayerDirty(); renderStackUI(); scheduleRender(); });
     actions.appendChild(toggle);
 
     const remove = document.createElement('button');
     remove.className = 'icon-btn danger'; remove.title = 'Entfernen'; remove.textContent = '✕';
-    remove.addEventListener('click', () => { stack = stack.filter(l => l.uid !== layer.uid); renderStackUI(); scheduleRender(); });
+    remove.addEventListener('click', () => { layer.stack = layer.stack.filter(l => l.uid !== fx.uid); markActiveLayerDirty(); renderStackUI(); scheduleRender(); });
     actions.appendChild(remove);
 
     header.appendChild(actions);
@@ -284,11 +447,12 @@ function renderStackUI() {
       e.preventDefault();
       card.classList.remove('drag-over');
       const draggedUid = Number(e.dataTransfer.getData('text/plain'));
-      const fromIndex = stack.findIndex(l => l.uid === draggedUid);
-      const toIndex = stack.findIndex(l => l.uid === layer.uid);
+      const fromIndex = fxStack.findIndex(l => l.uid === draggedUid);
+      const toIndex = fxStack.findIndex(l => l.uid === fx.uid);
       if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return;
-      const [moved] = stack.splice(fromIndex, 1);
-      stack.splice(toIndex, 0, moved);
+      const [moved] = fxStack.splice(fromIndex, 1);
+      fxStack.splice(toIndex, 0, moved);
+      markActiveLayerDirty();
       renderStackUI();
       scheduleRender();
     });
@@ -297,7 +461,7 @@ function renderStackUI() {
     body.className = 'effect-body';
     for (const param of def.params) {
       if (param.type === 'seed') continue;
-      body.appendChild(buildParamControl(layer, param));
+      body.appendChild(buildParamControl(fx, param));
     }
     if (body.children.length > 0) card.appendChild(body);
 
@@ -305,7 +469,7 @@ function renderStackUI() {
   });
 }
 
-function buildParamControl(layer, param) {
+function buildParamControl(fx, param) {
   const row = document.createElement('div');
   row.className = 'param-row';
 
@@ -314,8 +478,8 @@ function buildParamControl(layer, param) {
     label.className = 'param-checkbox';
     const input = document.createElement('input');
     input.type = 'checkbox';
-    input.checked = layer.params[param.key];
-    input.addEventListener('change', () => { layer.params[param.key] = input.checked; scheduleRender(); });
+    input.checked = fx.params[param.key];
+    input.addEventListener('change', () => { fx.params[param.key] = input.checked; markActiveLayerDirty(); scheduleRender(); });
     label.appendChild(input);
     label.appendChild(document.createTextNode(param.label));
     row.appendChild(label);
@@ -330,10 +494,10 @@ function buildParamControl(layer, param) {
     for (const [val, text] of param.options) {
       const opt = document.createElement('option');
       opt.value = val; opt.textContent = text;
-      if (val === layer.params[param.key]) opt.selected = true;
+      if (val === fx.params[param.key]) opt.selected = true;
       select.appendChild(opt);
     }
-    select.addEventListener('change', () => { layer.params[param.key] = select.value; scheduleRender(); });
+    select.addEventListener('change', () => { fx.params[param.key] = select.value; markActiveLayerDirty(); scheduleRender(); });
     row.appendChild(label);
     row.appendChild(select);
     return row;
@@ -346,15 +510,15 @@ function buildParamControl(layer, param) {
     const input = document.createElement('input');
     input.type = 'color';
     input.className = 'param-color';
-    input.value = layer.params[param.key];
-    input.addEventListener('input', () => { layer.params[param.key] = input.value; scheduleRender(); });
+    input.value = fx.params[param.key];
+    input.addEventListener('input', () => { fx.params[param.key] = input.value; markActiveLayerDirty(); scheduleRender(); });
     row.appendChild(label);
     row.appendChild(input);
     return row;
   }
 
   if (param.type === 'curve') {
-    return buildCurveControl(layer, param);
+    return buildCurveControl(fx, param);
   }
 
   // range
@@ -365,17 +529,18 @@ function buildParamControl(layer, param) {
   label.textContent = param.label;
   const value = document.createElement('span');
   value.className = 'param-value';
-  value.textContent = layer.params[param.key];
+  value.textContent = fx.params[param.key];
   labelRow.appendChild(label);
   labelRow.appendChild(value);
 
   const input = document.createElement('input');
   input.type = 'range';
   input.min = param.min; input.max = param.max; input.step = param.step;
-  input.value = layer.params[param.key];
+  input.value = fx.params[param.key];
   input.addEventListener('input', () => {
-    layer.params[param.key] = parseFloat(input.value);
+    fx.params[param.key] = parseFloat(input.value);
     value.textContent = input.value;
+    markActiveLayerDirty();
     scheduleRender();
   });
 
@@ -438,7 +603,7 @@ function nearestCurvePoint(pts, cx, cy) {
   return [nearest, nearestDist];
 }
 
-function buildCurveControl(layer, param) {
+function buildCurveControl(fx, param) {
   const wrap = document.createElement('div');
   wrap.className = 'curve-wrap';
 
@@ -451,37 +616,39 @@ function buildCurveControl(layer, param) {
   resetBtn.className = 'btn btn-ghost curve-reset';
   resetBtn.textContent = 'Kurve zurücksetzen';
   resetBtn.addEventListener('click', () => {
-    layer.params[param.key] = [{ x: 0, y: 0 }, { x: 255, y: 255 }];
-    drawCurve(canvas, layer.params[param.key]);
+    fx.params[param.key] = [{ x: 0, y: 0 }, { x: 255, y: 255 }];
+    drawCurve(canvas, fx.params[param.key]);
+    markActiveLayerDirty();
     scheduleRender();
   });
   wrap.appendChild(resetBtn);
 
-  canvas.addEventListener('mousedown', e => startCurveDrag(layer, param, canvas, e.clientX, e.clientY));
+  canvas.addEventListener('mousedown', e => startCurveDrag(fx, param, canvas, e.clientX, e.clientY));
   canvas.addEventListener('touchstart', e => {
     const t = e.touches[0];
-    startCurveDrag(layer, param, canvas, t.clientX, t.clientY);
+    startCurveDrag(fx, param, canvas, t.clientX, t.clientY);
     e.preventDefault();
   }, { passive: false });
 
   canvas.addEventListener('dblclick', e => {
     const [cx, cy] = curveEventXY(canvas, e.clientX, e.clientY);
-    const pts = layer.params[param.key];
+    const pts = fx.params[param.key];
     if (pts.length <= 2) return;
     const [nearest, dist] = nearestCurvePoint(pts, cx, cy);
     if (dist < 12 && nearest !== 0 && nearest !== pts.length - 1) {
       pts.splice(nearest, 1);
       drawCurve(canvas, pts);
+      markActiveLayerDirty();
       scheduleRender();
     }
   });
 
-  drawCurve(canvas, layer.params[param.key]);
+  drawCurve(canvas, fx.params[param.key]);
   return wrap;
 }
 
-function startCurveDrag(layer, param, canvas, clientX, clientY) {
-  const pts = layer.params[param.key];
+function startCurveDrag(fx, param, canvas, clientX, clientY) {
+  const pts = fx.params[param.key];
   const [cx, cy] = curveEventXY(canvas, clientX, clientY);
   const [nearest, dist] = nearestCurvePoint(pts, cx, cy);
   if (dist < 12) {
@@ -493,6 +660,7 @@ function startCurveDrag(layer, param, canvas, clientX, clientY) {
     const index = pts.findIndex(p => p.x === dx && p.y === dy);
     curveDrag = { pts, index, canvas };
     drawCurve(canvas, pts);
+    markActiveLayerDirty();
     scheduleRender();
   }
 }
@@ -507,6 +675,7 @@ function moveCurveDrag(clientX, clientY) {
     pts[index].x = clamp(dx, pts[index - 1].x + 1, pts[index + 1].x - 1);
   }
   drawCurve(canvas, pts);
+  markActiveLayerDirty();
   scheduleRender();
 }
 
@@ -520,55 +689,104 @@ document.addEventListener('touchmove', e => {
 }, { passive: false });
 document.addEventListener('touchend', () => { curveDrag = null; });
 
-async function render() {
-  if (!originalImageData) return;
-  setStatus('busy', 'verarbeite…');
-  let imgData = new ImageData(new Uint8ClampedArray(originalImageData.data), width, height);
-  for (const layer of stack) {
-    if (!layer.enabled) continue;
-    const def = EFFECT_DEFS.find(d => d.id === layer.defId);
-    const result = await def.apply(imgData, width, height, layer.params);
+/* ── Compositing pipeline ── */
+async function renderLayerCanvas(layer) {
+  if (layer.renderedCanvas && !layer.dirty) return layer.renderedCanvas;
+  const c = document.createElement('canvas');
+  c.width = layer.workW; c.height = layer.workH;
+  const cx = c.getContext('2d', { willReadFrequently: true });
+  cx.drawImage(layer.img, 0, 0, layer.workW, layer.workH);
+  let imgData = cx.getImageData(0, 0, layer.workW, layer.workH);
+  for (const fx of layer.stack) {
+    if (!fx.enabled) continue;
+    const def = EFFECT_DEFS.find(d => d.id === fx.defId);
+    const result = await def.apply(imgData, layer.workW, layer.workH, fx.params);
     if (result) imgData = result;
   }
-  ctx.putImageData(imgData, 0, 0);
+  cx.putImageData(imgData, 0, 0);
+  layer.renderedCanvas = c;
+  layer.dirty = false;
+  return c;
+}
+
+async function renderComposite() {
+  if (canvasW === 0) return;
+  setStatus('busy', 'verarbeite…');
+  if (canvas.width !== canvasW) canvas.width = canvasW;
+  if (canvas.height !== canvasH) canvas.height = canvasH;
+  ctx.clearRect(0, 0, canvasW, canvasH);
+  if (canvasBg === 'white') { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvasW, canvasH); }
+  else if (canvasBg === 'black') { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, canvasW, canvasH); }
+
+  for (const layer of layers) {
+    if (!layer.visible) continue;
+    const layerCanvas = await renderLayerCanvas(layer);
+    ctx.save();
+    ctx.globalAlpha = clamp(layer.opacity, 0, 100) / 100;
+    ctx.globalCompositeOperation = layer.blendMode;
+    ctx.drawImage(layerCanvas, layer.x, layer.y, layer.w, layer.h);
+    ctx.restore();
+  }
   setStatus('ready', 'bereit');
 }
 
 async function scheduleRender() {
   if (isRendering) { pending = true; return; }
   isRendering = true;
-  await render();
+  await renderComposite();
   isRendering = false;
   if (pending) { pending = false; scheduleRender(); }
 }
 
-function setupCanvasFromImage(img) {
-  sourceImage = img;
-  let w = img.naturalWidth, h = img.naturalHeight;
-  if (Math.max(w, h) > MAX_DIM) {
-    const scale = MAX_DIM / Math.max(w, h);
-    w = Math.round(w * scale); h = Math.round(h * scale);
-  }
-  width = w; height = h;
-  canvas.width = w; canvas.height = h;
-  ctx.drawImage(img, 0, 0, w, h);
-  originalImageData = ctx.getImageData(0, 0, w, h);
-  stack = [];
-  dimText.textContent = `${w}×${h}px`;
-  renderStackUI();
-  editorArea.classList.add('has-image');
-  scheduleRender();
+/* ── Layer creation ── */
+function fitLayerToCanvas(natW, natH) {
+  const scale = Math.min(canvasW / natW, canvasH / natH);
+  const w = natW * scale, h = natH * scale;
+  return { x: (canvasW - w) / 2, y: (canvasH - h) / 2, w, h };
 }
 
-function loadFile(file) {
+function addImageLayer(file) {
   if (!file || !file.type.startsWith('image/')) return;
   const url = URL.createObjectURL(file);
-  loadImage(url).then(img => { URL.revokeObjectURL(url); setupCanvasFromImage(img); });
+  loadImage(url).then(img => {
+    URL.revokeObjectURL(url);
+    let workW = img.naturalWidth, workH = img.naturalHeight;
+    if (Math.max(workW, workH) > MAX_DIM) {
+      const scale = MAX_DIM / Math.max(workW, workH);
+      workW = Math.round(workW * scale); workH = Math.round(workH * scale);
+    }
+
+    let x, y, w, h;
+    if (canvasW === 0) {
+      canvasW = workW; canvasH = workH; canvasBg = 'white';
+      x = 0; y = 0; w = workW; h = workH;
+    } else {
+      ({ x, y, w, h } = fitLayerToCanvas(workW, workH));
+    }
+
+    const layer = {
+      uid: uidCounter++, name: file.name || `Ebene ${layers.length + 1}`,
+      img, workW, workH, x, y, w, h, baseW: w, baseH: h, scalePct: 100,
+      blendMode: 'source-over', opacity: 100, visible: true, stack: [], dirty: true,
+    };
+    layers.push(layer);
+    activeLayerId = layer.uid;
+    dimText.textContent = `${canvasW}×${canvasH}px`;
+    editorArea.classList.add('has-image');
+    canvas.classList.add('layer-draggable');
+    renderLayerList();
+    renderStackUI();
+    scheduleRender();
+  });
 }
 
-fileInput.addEventListener('change', () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); fileInput.value = ''; });
+function addImageLayers(fileList) {
+  for (const f of fileList) addImageLayer(f);
+}
+
+fileInput.addEventListener('change', () => { addImageLayers(fileInput.files); fileInput.value = ''; });
 uploadZone.addEventListener('click', () => fileInput.click());
-document.getElementById('newImageBtn').addEventListener('click', () => fileInput.click());
+document.getElementById('addImageBtn').addEventListener('click', () => fileInput.click());
 
 ['dragover', 'dragenter'].forEach(evt =>
   uploadZone.addEventListener(evt, e => { e.preventDefault(); uploadZone.classList.add('drag-over'); })
@@ -576,23 +794,84 @@ document.getElementById('newImageBtn').addEventListener('click', () => fileInput
 ['dragleave', 'drop'].forEach(evt =>
   uploadZone.addEventListener(evt, e => { e.preventDefault(); uploadZone.classList.remove('drag-over'); })
 );
-uploadZone.addEventListener('drop', e => { if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); });
+uploadZone.addEventListener('drop', e => addImageLayers(e.dataTransfer.files));
 
 document.addEventListener('paste', e => {
   const items = e.clipboardData?.items;
   if (!items) return;
   for (const item of items) {
-    if (item.type.startsWith('image/')) { loadFile(item.getAsFile()); break; }
+    if (item.type.startsWith('image/')) { addImageLayer(item.getAsFile()); break; }
   }
 });
 
-document.getElementById('resetBtn').addEventListener('click', () => { stack = []; renderStackUI(); scheduleRender(); });
+/* ── Neue Leinwand ── */
+const canvasModal = document.getElementById('canvasModal');
+document.getElementById('newCanvasBtn').addEventListener('click', () => canvasModal.classList.add('open'));
+document.getElementById('closeCanvasModalBtn').addEventListener('click', () => canvasModal.classList.remove('open'));
+canvasModal.addEventListener('click', e => { if (e.target === canvasModal) canvasModal.classList.remove('open'); });
+
+document.getElementById('createCanvasBtn').addEventListener('click', () => {
+  const w = clamp(parseInt(document.getElementById('canvasWidthInput').value, 10) || 1200, 16, 4000);
+  const h = clamp(parseInt(document.getElementById('canvasHeightInput').value, 10) || 800, 16, 4000);
+  canvasW = w; canvasH = h;
+  canvasBg = document.getElementById('canvasBgSelect').value;
+  layers = [];
+  activeLayerId = null;
+  dimText.textContent = `${w}×${h}px`;
+  editorArea.classList.add('has-image');
+  canvas.classList.remove('layer-draggable');
+  canvasModal.classList.remove('open');
+  renderLayerList();
+  renderStackUI();
+  scheduleRender();
+});
+
+/* ── Drag-to-move the active layer directly on the canvas ── */
+function canvasPointFromEvent(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  return [(clientX - rect.left) * (canvas.width / rect.width), (clientY - rect.top) * (canvas.height / rect.height)];
+}
+
+function startLayerDrag(clientX, clientY) {
+  const layer = getActiveLayer();
+  if (!layer) return;
+  const [px, py] = canvasPointFromEvent(clientX, clientY);
+  if (px >= layer.x && px <= layer.x + layer.w && py >= layer.y && py <= layer.y + layer.h) {
+    layerDrag = { layer, offsetX: px - layer.x, offsetY: py - layer.y };
+  }
+}
+function moveLayerDrag(clientX, clientY) {
+  if (!layerDrag) return;
+  const [px, py] = canvasPointFromEvent(clientX, clientY);
+  layerDrag.layer.x = px - layerDrag.offsetX;
+  layerDrag.layer.y = py - layerDrag.offsetY;
+  scheduleRender();
+}
+
+canvas.addEventListener('mousedown', e => startLayerDrag(e.clientX, e.clientY));
+document.addEventListener('mousemove', e => moveLayerDrag(e.clientX, e.clientY));
+document.addEventListener('mouseup', () => { layerDrag = null; });
+canvas.addEventListener('touchstart', e => { startLayerDrag(e.touches[0].clientX, e.touches[0].clientY); }, { passive: true });
+document.addEventListener('touchmove', e => {
+  if (layerDrag) { moveLayerDrag(e.touches[0].clientX, e.touches[0].clientY); e.preventDefault(); }
+}, { passive: false });
+document.addEventListener('touchend', () => { layerDrag = null; });
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  const layer = getActiveLayer();
+  if (!layer) return;
+  layer.stack = [];
+  layer.dirty = true;
+  renderStackUI();
+  scheduleRender();
+});
 
 document.getElementById('randomBtn').addEventListener('click', () => {
-  if (!originalImageData) return;
+  const layer = getActiveLayer();
+  if (!layer) return;
   const pool = [...EFFECT_DEFS];
   const count = 2 + Math.floor(Math.random() * 3);
-  stack = [];
+  layer.stack = [];
   for (let i = 0; i < count; i++) {
     const def = pool.splice(Math.floor(Math.random() * pool.length), 1)[0];
     const params = defaultParams(def);
@@ -607,12 +886,14 @@ document.getElementById('randomBtn').addEventListener('click', () => {
         params[param.key] = Math.floor(Math.random() * 1e9);
       }
     }
-    stack.push({ uid: uidCounter++, defId: def.id, params, enabled: true });
+    layer.stack.push({ uid: uidCounter++, defId: def.id, params, enabled: true });
   }
+  layer.dirty = true;
   renderStackUI();
   scheduleRender();
 });
 
+/* ── Full-resolution export (composites all layers, scales pixel-space params) ── */
 function scaleParams(def, params, factor) {
   if (factor === 1) return params;
   const out = { ...params };
@@ -624,26 +905,46 @@ function scaleParams(def, params, factor) {
   return out;
 }
 
-async function renderAtResolution(imgEl, targetW, targetH) {
+async function renderLayerAtScale(layer, factor) {
+  const w = Math.max(1, Math.round(layer.workW * factor));
+  const h = Math.max(1, Math.round(layer.workH * factor));
   const c = document.createElement('canvas');
-  c.width = targetW; c.height = targetH;
+  c.width = w; c.height = h;
   const cx = c.getContext('2d', { willReadFrequently: true });
-  cx.drawImage(imgEl, 0, 0, targetW, targetH);
-  let imgData = cx.getImageData(0, 0, targetW, targetH);
-  const factor = targetW / width;
-  for (const layer of stack) {
-    if (!layer.enabled) continue;
-    const def = EFFECT_DEFS.find(d => d.id === layer.defId);
-    const params = scaleParams(def, layer.params, factor);
-    const result = await def.apply(imgData, targetW, targetH, params);
+  cx.drawImage(layer.img, 0, 0, w, h);
+  let imgData = cx.getImageData(0, 0, w, h);
+  for (const fx of layer.stack) {
+    if (!fx.enabled) continue;
+    const def = EFFECT_DEFS.find(d => d.id === fx.defId);
+    const params = scaleParams(def, fx.params, factor);
+    const result = await def.apply(imgData, w, h, params);
     if (result) imgData = result;
   }
   cx.putImageData(imgData, 0, 0);
   return c;
 }
 
+async function renderCompositeAtResolution(exportW, exportH) {
+  const c = document.createElement('canvas');
+  c.width = exportW; c.height = exportH;
+  const cx = c.getContext('2d');
+  if (canvasBg === 'white') { cx.fillStyle = '#fff'; cx.fillRect(0, 0, exportW, exportH); }
+  else if (canvasBg === 'black') { cx.fillStyle = '#000'; cx.fillRect(0, 0, exportW, exportH); }
+  const factor = exportW / canvasW;
+  for (const layer of layers) {
+    if (!layer.visible) continue;
+    const layerCanvas = await renderLayerAtScale(layer, factor);
+    cx.save();
+    cx.globalAlpha = clamp(layer.opacity, 0, 100) / 100;
+    cx.globalCompositeOperation = layer.blendMode;
+    cx.drawImage(layerCanvas, layer.x * factor, layer.y * factor, layer.w * factor, layer.h * factor);
+    cx.restore();
+  }
+  return c;
+}
+
 document.getElementById('downloadBtn').addEventListener('click', async () => {
-  if (!originalImageData || !sourceImage) return;
+  if (canvasW === 0) return;
   const btn = document.getElementById('downloadBtn');
   const originalText = btn.textContent;
   btn.disabled = true;
@@ -651,12 +952,12 @@ document.getElementById('downloadBtn').addEventListener('click', async () => {
   setStatus('busy', 'exportiert in voller Qualität…');
 
   try {
-    let fullW = sourceImage.naturalWidth, fullH = sourceImage.naturalHeight;
-    if (Math.max(fullW, fullH) > EXPORT_MAX_DIM) {
-      const scale = EXPORT_MAX_DIM / Math.max(fullW, fullH);
-      fullW = Math.round(fullW * scale); fullH = Math.round(fullH * scale);
+    let exportW = canvasW, exportH = canvasH;
+    if (Math.max(canvasW, canvasH) < EXPORT_MAX_DIM) {
+      const scale = EXPORT_MAX_DIM / Math.max(canvasW, canvasH);
+      exportW = Math.round(canvasW * scale); exportH = Math.round(canvasH * scale);
     }
-    const exportCanvas = await renderAtResolution(sourceImage, fullW, fullH);
+    const exportCanvas = await renderCompositeAtResolution(exportW, exportH);
     exportCanvas.toBlob(blob => {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -673,5 +974,6 @@ document.getElementById('downloadBtn').addEventListener('click', async () => {
 });
 
 populateAddEffectSelect();
+renderLayerList();
 renderStackUI();
 setStatus('idle', 'bereit');

@@ -8,7 +8,7 @@ Projekt-spezifischer Kontext. Ergänzt `~/.claude/CLAUDE.md`.
 
 - **Name:** glitch
 - **Domain:** glitch.bensn.me
-- **Version:** v2.2.0
+- **Version:** v2.3.0
 - **Status:** active
 - **Stack:** Vanilla JS + Canvas API (Foto-Modus, clientseitig, kein Backend) + Flask/ffmpeg-Backend (Video-Modus, Port 5007)
 
@@ -93,15 +93,31 @@ git push origin main
 ## Design & Effekte (Foto-Modus)
 
 - Nutzt Shared Design System (`https://bensn.me/shared/bensn.css`, Syne/DM Mono Fonts, App-Navbar-Pattern)
-- Bild wird beim Upload auf max. 1600px Kantenlänge herunterskaliert fürs *Editieren* (Performance bei Pixel Sort etc.) — das Original-`<img>` bleibt in `sourceImage` erhalten
-- Effekt-Stack: beliebig viele Effekte hinzufügen, umsortieren (↑/↓ **oder Drag&Drop** am ⠿-Handle), togglen, entfernen — Pipeline rendert bei jeder Parameteränderung neu vom Original-Bild aus
 - Effekte mit Zufallskomponente (Dithering "Random", Noise, Block Glitch) haben einen 🎲-Button zum Neu-Würfeln (fester Seed für Reproduzierbarkeit bis zum Reroll)
-- **Export in voller Qualität:** Download rendert die komplette Effekt-Pipeline neu gegen `sourceImage` bei bis zu `EXPORT_MAX_DIM` (4000px), nicht bei der 1600px-Editier-Auflösung. Params mit `scalesWithResolution: true` (z.B. `blockSize`, `amplitude`, RGB-Shift `amount`, Scanline `spacing`/`thickness`) werden dabei proportional zum Auflösungs-Verhältnis hochskaliert (`scaleParams()`), damit der Export optisch genau wie die Vorschau aussieht, nur schärfer. Neuer Foto-Effekt mit Pixel-Maßen? `scalesWithResolution: true` am Param nicht vergessen.
 
 **Effekte (Bilder):**
 Grundkorrektur (Helligkeit/Kontrast/Sättigung), Gradationskurve, Farbüberlagerung, Verlaufsüberlagerung, Pixelation (mit Displacement), Pixel Sort, Dithering (Floyd–Steinberg / Atkinson / Bayer / Random), RGB Shift, Scanlines, Noise, Block Glitch, Posterize, Wave Distortion, JPEG Crunch, Invert
 
-Farbüberlagerung und Verlaufsüberlagerung teilen sich die Blend-Modi-Logik (`blendChannels()` in effects.js: normal/multiply/screen/overlay/color) — neue Blend-Modi dort zentral ergänzen.
+Farbüberlagerung und Verlaufsüberlagerung teilen sich die Blend-Modi-Logik (`blendChannels()` in effects.js: normal/multiply/screen/overlay/color) — neue Blend-Modi dort zentral ergänzen. Das ist eine andere, kleinere Blend-Palette als die Ebenen-Kompositierung unten (Canvas-native Modi) — nicht verwechseln.
+
+---
+
+## Foto-Modus: Ebenen (Layers)
+
+**Datenmodell:** `layers[]` (unten→oben), jede Ebene: `{ img, workW/workH (Arbeitsauflösung, ≤1600px), x/y/w/h (Platzierung in Canvas-Pixeln), baseW/baseH/scalePct (Größen-Regler-Referenz), blendMode, opacity, visible, stack (eigener Effekt-Stack), dirty, renderedCanvas (Cache) }`. Der gemeinsame Canvas (`canvasW/canvasH`) ist entweder die (herunterskalierte) Auflösung des ersten hochgeladenen Bildes oder aus "Neue Leinwand" (freie Breite/Höhe + Hintergrund weiß/schwarz/transparent).
+
+**Rendering (`renderComposite()` in app.js):** pro sichtbarer Ebene bottom-to-top wird `renderLayerCanvas()` aufgerufen (rendert nur den *eigenen* Effekt-Stack der Ebene auf einen Offscreen-Canvas — **cached** über `layer.dirty`, wird nur bei Änderungen am Effekt-Stack dieser Ebene neu berechnet, nicht bei Verschieben/Resize/Deckkraft/Blend-Modus-Änderung anderer Ebenen), dann per `ctx.drawImage(..., x, y, w, h)` mit `ctx.globalAlpha` + `ctx.globalCompositeOperation` auf den Haupt-Canvas kompositiert.
+
+**Wichtig — Blend-Modi sind nativ:** die 16 Modi in `BLEND_MODES` (app.js) sind exakt die [CSS Compositing](https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/globalCompositeOperation) Werte (`multiply`, `screen`, `overlay`, `darken`, `lighten`, `color-dodge`, `color-burn`, `hard-light`, `soft-light`, `difference`, `exclusion`, `hue`, `saturation`, `color`, `luminosity`, plus `source-over` für "Normal"). Kein eigener Blend-Code nötig — der Browser übernimmt das. Das ist eine bewusste Design-Entscheidung: keine der 16 Photoshop-Modi händisch nachbauen.
+
+**Interaktion:**
+- Ebenen-Panel: Reorder per ↑/↓ oder Drag&Drop (⠿-Handle), Sichtbarkeit toggeln, Blend-Modus + Deckkraft + Größe (%) pro Ebene, Klick auf eine Karte macht sie zur `activeLayerId` — deren Effekt-Stack wird unten angezeigt/editiert
+- Verschieben: Drag direkt auf dem Haupt-Canvas (nur innerhalb der Bounds der *aktiven* Ebene startet der Drag, `startLayerDrag`/`moveLayerDrag`)
+- Größe: Prozent-Slider skaliert von `baseW/baseH` (der ursprünglichen "fit to canvas"-Größe) aus, zentriert um den Mittelpunkt
+
+**Export in voller Qualität:** `renderCompositeAtResolution()` skaliert **alle** Ebenen gemeinsam hoch (Ziel: `EXPORT_MAX_DIM` = 4000px auf der langen Canvas-Seite) und rendert jede Ebene erneut mit `renderLayerAtScale()` gegen ihr Original-`img`. Params mit `scalesWithResolution: true` (z.B. `blockSize`, `amplitude`, RGB-Shift `amount`, Scanline `spacing`/`thickness`) werden proportional mitskaliert (`scaleParams()`), damit der Export optisch der Vorschau entspricht, nur schärfer. Neuer Foto-Effekt mit Pixel-Maßen? `scalesWithResolution: true` am Param nicht vergessen.
+
+**Noch nicht gebaut (nächste Version):** Crop pro Ebene/Komposition, Effekt-Masken (Kreis/Rechteck/Pen-Tool) — siehe Roadmap.
 
 ---
 
@@ -153,6 +169,7 @@ ffmpeg wurde für dieses Projekt via `apt install ffmpeg` auf dem Server install
 - Foto-Effekte sind reine Funktionen in `effects.js`: `(imageData, width, height, params) => void | ImageData`
 - Neue Foto-Effekte registrieren: Eintrag in `EFFECT_DEFS` (app.js) mit `id`, `label`, `color`, `params`-Schema, `apply`-Funktion — UI generiert Controls automatisch
 - Param-Typen (Foto): `range`, `select`, `checkbox`, `color`, `curve`, `seed`
+- Foto-Effekt-Stacks gehören jetzt einer **Ebene** (`layer.stack`), nicht mehr einer globalen Variable — beim Ändern eines Effekt-Parameters immer `markActiveLayerDirty()` vor `scheduleRender()` aufrufen, sonst rendert die gecachte Ebene nicht neu
 - Video-Backend-Endpoints geben bei Fehlern `{error: "..."}` mit passendem HTTP-Status zurück — Frontend zeigt das direkt an
 
 ---
@@ -167,7 +184,7 @@ ffmpeg wurde für dieses Projekt via `apt install ffmpeg` auf dem Server install
 | v2.1.0 | Video: Multi-Clip-Merge (mehrere Videos fusionieren) statt Einzelvideo; Foto: Verlaufsüberlagerung | ✅ done |
 | v2.1.1 | Video: Info-Modal erklärt Datamoshing-Prinzip und alle Regler | ✅ done |
 | v2.2.0 | Foto: Drag&Drop-Reordering, Export in voller Auflösung; Video: Grundkorrektur, Export in 720p/1080p | ✅ done |
-| v2.3.0 | Foto: Mehrere Bilder als Ebenen überlagern (klassische Blend-Modi, Deckkraft, "Neue Leinwand" für Collagen) | geplant |
+| v2.3.0 | Foto: Ebenen-System — mehrere Bilder überlagern, 16 native Blend-Modi, Deckkraft, Größe, Drag-to-Move, "Neue Leinwand" für Collagen | ✅ done |
 | v2.4.0 | Foto: Crop pro Ebene/Komposition, Masken-Funktion (Kreis/Rechteck/Pen-Tool, Effekte nur in ausgewähltem Bereich anwenden) | geplant |
 
 ---

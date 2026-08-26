@@ -29,7 +29,7 @@
 
   <div class="eyebrow-row">
     <div class="glitch-mark" data-text="GLITCH">GLITCH</div>
-    <div class="eyebrow-sub">Pixelsort · Dithering · RGB-Shift · Datamosh-artige Effekte</div>
+    <div class="eyebrow-sub">Pixelsort · Dithering · RGB-Shift · Ebenen &amp; Blend-Modi</div>
     <div class="mode-switch">
       <span class="mode-tab active">Foto</span>
       <a href="video.html" class="mode-tab">Video</a>
@@ -39,7 +39,8 @@
   <div class="editor">
     <div class="editor-main" id="editorArea">
       <div class="toolbar">
-        <button class="btn" id="newImageBtn">Neues Bild</button>
+        <button class="btn" id="addImageBtn">+ Bild hinzufügen</button>
+        <button class="btn" id="newCanvasBtn">Neue Leinwand</button>
         <button class="btn" id="randomBtn">🎲 Zufalls-Glitch</button>
         <button class="btn btn-ghost" id="resetBtn">Zurücksetzen</button>
         <div class="toolbar-spacer"></div>
@@ -52,8 +53,8 @@
           <path d="M12 16V4M12 4L7 9M12 4l5 5" stroke-linecap="round" stroke-linejoin="round"/>
           <path d="M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
-        <div class="upload-title">Bild hierher ziehen oder klicken</div>
-        <div class="upload-sub">JPG, PNG, WebP — oder einfach einfügen (⌘V)</div>
+        <div class="upload-title">Bilder hierher ziehen oder klicken</div>
+        <div class="upload-sub">Mehrfachauswahl möglich · JPG, PNG, WebP — oder einfach einfügen (⌘V)</div>
       </div>
 
       <div class="canvas-stage" id="canvasStage">
@@ -62,7 +63,12 @@
     </div>
 
     <div class="sidebar">
-      <div class="sidebar-header">Effekt-Stack</div>
+      <div class="sidebar-header-row">
+        <div class="sidebar-header">Ebenen</div>
+      </div>
+      <div class="layer-list" id="layerList"></div>
+
+      <div class="sidebar-header effects-header">Effekte — <span id="activeLayerLabel">–</span></div>
       <select id="addEffectSelect"></select>
       <div class="effect-stack" id="effectStack"></div>
     </div>
@@ -70,7 +76,35 @@
 
 </div>
 
-<input type="file" id="fileInput" accept="image/*" hidden>
+<div class="modal-overlay" id="canvasModal">
+  <div class="modal modal-small">
+    <div class="modal-header">
+      <h2>Neue Leinwand</h2>
+      <button class="icon-btn" id="closeCanvasModalBtn" title="Schließen">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="param-row">
+        <div class="param-label-row"><span class="param-label">Breite (px)</span></div>
+        <input type="number" id="canvasWidthInput" class="num-input" min="16" max="4000" value="1200">
+      </div>
+      <div class="param-row">
+        <div class="param-label-row"><span class="param-label">Höhe (px)</span></div>
+        <input type="number" id="canvasHeightInput" class="num-input" min="16" max="4000" value="800">
+      </div>
+      <div class="param-row">
+        <span class="param-label">Hintergrund</span>
+        <select id="canvasBgSelect">
+          <option value="white">Weiß</option>
+          <option value="black">Schwarz</option>
+          <option value="transparent">Transparent</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" id="createCanvasBtn" style="width:100%; margin-top:0.5rem;">Erstellen</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="fileInput" accept="image/*" multiple hidden>
 
 <script src="js/effects.js"></script>
 <script src="js/app.js"></script>
