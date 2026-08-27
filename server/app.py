@@ -82,7 +82,7 @@ def prepare():
 def build_color_filter(segments):
     """One eq/hue/negate chain per clip segment (frame-range within the merged
     video), then concat back together — lets each original clip keep its own
-    brightness/contrast/saturation/hue/invert in the final render."""
+    brightness/contrast/saturation/hue/invert/bw in the final render."""
     if not segments:
         return None
     try:
@@ -96,6 +96,8 @@ def build_color_filter(segments):
             h = clamp(float(seg.get('hue', 0)), -180, 180)
             chain = (f"[0:v]trim=start_frame={start}:end_frame={end},setpts=PTS-STARTPTS,"
                      f"eq=brightness={b}:contrast={c}:saturation={s}")
+            if seg.get('bw'):
+                chain += ",hue=s=0"
             if h:
                 chain += f",hue=h={h}"
             if seg.get('invert'):

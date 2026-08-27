@@ -27,7 +27,7 @@ let activeClipDrag = null; // { clip, target: 'in'|'out'|'cut', canvas, isFirst,
 const globalParams = { dupWindow: 0, dupCount: 0, noiseIntensity: 0, seed: 1 };
 
 function defaultClipColor() {
-  return { brightness: 0, contrast: 0, saturation: 0, hue: 0, invert: false };
+  return { brightness: 0, contrast: 0, saturation: 0, hue: 0, invert: false, bw: false };
 }
 
 function setStatus(state, text) {
@@ -179,12 +179,21 @@ function renderClipList() {
       invertRow.append(invertInput, document.createTextNode('Invertieren'));
       colorPanel.appendChild(invertRow);
 
+      const bwRow = document.createElement('label');
+      bwRow.className = 'param-checkbox';
+      const bwInput = document.createElement('input');
+      bwInput.type = 'checkbox';
+      bwInput.checked = clip.bw;
+      bwInput.addEventListener('change', () => { clip.bw = bwInput.checked; });
+      bwRow.append(bwInput, document.createTextNode('Schwarz/Weiß'));
+      colorPanel.appendChild(bwRow);
+
       const applyAllBtn = document.createElement('button');
       applyAllBtn.className = 'btn small-btn';
       applyAllBtn.textContent = 'Auf alle Clips anwenden';
       applyAllBtn.addEventListener('click', () => {
-        const { brightness, contrast, saturation, hue, invert } = clip;
-        clips.forEach(c => { if (c !== clip) Object.assign(c, { brightness, contrast, saturation, hue, invert }); });
+        const { brightness, contrast, saturation, hue, invert, bw } = clip;
+        clips.forEach(c => { if (c !== clip) Object.assign(c, { brightness, contrast, saturation, hue, invert, bw }); });
         renderClipList();
       });
       colorPanel.appendChild(applyAllBtn);
@@ -370,7 +379,7 @@ function buildSegmentsPayload(colorClips, mergeResult) {
     return {
       start: seg.start, end: seg.end,
       brightness: c.brightness, contrast: c.contrast, saturation: c.saturation,
-      hue: c.hue, invert: c.invert,
+      hue: c.hue, invert: c.invert, bw: c.bw,
     };
   });
 }

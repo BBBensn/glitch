@@ -497,18 +497,18 @@ Effects.pixelate = function (imageData, width, height, p) {
         sbx = clampInt(bx + Math.round((rand() - 0.5) * 2 * maxShift), 0, width - bw);
         sby = clampInt(by + Math.round((rand() - 0.5) * 2 * maxShift), 0, height - bh);
       }
-      let r = 0, g = 0, b = 0, count = 0;
+      let r = 0, g = 0, b = 0, a = 0, count = 0;
       for (let y = 0; y < bh; y++) {
         for (let x = 0; x < bw; x++) {
           const idx = ((sby + y) * width + (sbx + x)) * 4;
-          r += src[idx]; g += src[idx + 1]; b += src[idx + 2]; count++;
+          r += src[idx]; g += src[idx + 1]; b += src[idx + 2]; a += src[idx + 3]; count++;
         }
       }
-      r = Math.round(r / count); g = Math.round(g / count); b = Math.round(b / count);
+      r = Math.round(r / count); g = Math.round(g / count); b = Math.round(b / count); a = Math.round(a / count);
       for (let y = 0; y < bh; y++) {
         for (let x = 0; x < bw; x++) {
           const idx = ((by + y) * width + (bx + x)) * 4;
-          data[idx] = r; data[idx + 1] = g; data[idx + 2] = b; data[idx + 3] = 255;
+          data[idx] = r; data[idx + 1] = g; data[idx + 2] = b; data[idx + 3] = a;
         }
       }
     }

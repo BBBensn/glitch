@@ -423,6 +423,29 @@ select:hover { border-color: var(--border-hover); }
   gap: 0.6rem;
 }
 
+.spam-panel {
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.text-input-area {
+  width: 100%;
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.7rem;
+  resize: vertical;
+  min-height: 3.2rem;
+}
+.text-input-area:focus { outline: none; border-color: var(--accent-blue); }
+
 /* ── Small modals / forms ── */
 .modal-small { max-width: 340px; }
 .num-input {

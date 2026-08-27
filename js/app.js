@@ -158,6 +158,27 @@ const EFFECT_DEFS = [
   },
 ];
 
+/* ── Text layer fonts (curated Google Fonts, loaded via index.html <link>) ──
+   Each font lists only the weights it actually ships — several of these are
+   single-weight display faces (the "boldness" is baked into the design, not
+   a variable axis), so the weight <select> is rebuilt per font, not fixed. */
+const TEXT_FONTS = [
+  { id: 'syne', cssFamily: 'Syne', label: 'Syne', weights: [['400', 'Regular'], ['700', 'Bold'], ['800', 'Extrabold']] },
+  { id: 'dmmono', cssFamily: 'DM Mono', label: 'DM Mono', weights: [['400', 'Regular'], ['500', 'Medium']] },
+  { id: 'archivoblack', cssFamily: 'Archivo Black', label: 'Archivo Black', weights: [['400', 'Regular']] },
+  { id: 'bebasneue', cssFamily: 'Bebas Neue', label: 'Bebas Neue', weights: [['400', 'Regular']] },
+  { id: 'spacegrotesk', cssFamily: 'Space Grotesk', label: 'Space Grotesk', weights: [['400', 'Regular'], ['500', 'Medium'], ['700', 'Bold']] },
+  { id: 'anton', cssFamily: 'Anton', label: 'Anton', weights: [['400', 'Regular']] },
+  { id: 'permanentmarker', cssFamily: 'Permanent Marker', label: 'Permanent Marker', weights: [['400', 'Regular']] },
+  { id: 'ibmplexmono', cssFamily: 'IBM Plex Mono', label: 'IBM Plex Mono', weights: [['400', 'Regular'], ['700', 'Bold']] },
+];
+
+for (const font of TEXT_FONTS) {
+  for (const [weight] of font.weights) {
+    document.fonts.load(`${weight} 40px "${font.cssFamily}"`).catch(() => {});
+  }
+}
+
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d', { willReadFrequently: true });
 const fileInput = document.getElementById('fileInput');
@@ -202,6 +223,33 @@ function getActiveLayer() {
 function markActiveLayerDirty() {
   const layer = getActiveLayer();
   if (layer) layer.dirty = true;
+}
+
+/* Deep-clones a layer: crop/stack/params/mask must be independent copies
+   (else editing the duplicate's curve points or mask would mutate the
+   original's too) — img is intentionally shared by reference (same source
+   pixels), and renderedCanvas is dropped since dirty:true forces a fresh
+   render anyway. Fresh uids for the layer and every stack entry. */
+function duplicateLayer(layer) {
+  const clone = { ...layer };
+  delete clone.renderedCanvas;
+  clone.uid = uidCounter++;
+  clone.name = layer.name + ' Kopie';
+  if (layer.crop) clone.crop = structuredClone(layer.crop);
+  clone.stack = layer.stack.map(fx => {
+    const fxClone = structuredClone(fx);
+    fxClone.uid = uidCounter++;
+    return fxClone;
+  });
+  clone.x = layer.x + 16;
+  clone.y = layer.y + 16;
+  clone.dirty = true;
+  const index = layers.findIndex(l => l.uid === layer.uid);
+  layers.splice(index + 1, 0, clone);
+  activeLayerId = clone.uid;
+  renderLayerList();
+  renderStackUI();
+  scheduleRender();
 }
 
 function defaultParams(def) {
@@ -287,6 +335,10 @@ function renderLayerList() {
     down.className = 'icon-btn'; down.title = 'Nach unten'; down.textContent = '↓'; down.disabled = index === 0;
     down.addEventListener('click', e => { e.stopPropagation(); [layers[index - 1], layers[index]] = [layers[index], layers[index - 1]]; renderLayerList(); scheduleRender(); });
     actions.appendChild(down);
+    const duplicate = document.createElement('button');
+    duplicate.className = 'icon-btn'; duplicate.title = 'Duplizieren'; duplicate.textContent = '⧉';
+    duplicate.addEventListener('click', e => { e.stopPropagation(); duplicateLayer(layer); });
+    actions.appendChild(duplicate);
     const remove = document.createElement('button');
     remove.className = 'icon-btn danger'; remove.title = 'Entfernen'; remove.textContent = '✕';
     remove.addEventListener('click', e => {
@@ -337,22 +389,26 @@ function renderLayerList() {
       transformRow.appendChild(flipVBtn);
       body.appendChild(transformRow);
 
-      const cropRow = document.createElement('div');
-      cropRow.className = 'inline-btn-row';
-      const cropBtn = document.createElement('button');
-      cropBtn.className = 'btn btn-ghost small-btn' + (cropModeLayerId === layer.uid ? ' active-toggle' : '');
-      cropBtn.textContent = cropModeLayerId === layer.uid ? 'Zuschneiden ✓' : 'Zuschneiden';
-      cropBtn.addEventListener('click', e => { e.stopPropagation(); toggleCropMode(layer); });
-      cropRow.appendChild(cropBtn);
-      const isCropped = layer.crop.x !== 0 || layer.crop.y !== 0 || layer.crop.w !== layer.workW || layer.crop.h !== layer.workH;
-      if (isCropped) {
-        const resetCropBtn = document.createElement('button');
-        resetCropBtn.className = 'btn btn-ghost small-btn';
-        resetCropBtn.textContent = 'Crop zurücksetzen';
-        resetCropBtn.addEventListener('click', e => { e.stopPropagation(); resetLayerCrop(layer); });
-        cropRow.appendChild(resetCropBtn);
+      if (layer.type === 'text') {
+        body.appendChild(buildTextLayerPanel(layer));
+      } else {
+        const cropRow = document.createElement('div');
+        cropRow.className = 'inline-btn-row';
+        const cropBtn = document.createElement('button');
+        cropBtn.className = 'btn btn-ghost small-btn' + (cropModeLayerId === layer.uid ? ' active-toggle' : '');
+        cropBtn.textContent = cropModeLayerId === layer.uid ? 'Zuschneiden ✓' : 'Zuschneiden';
+        cropBtn.addEventListener('click', e => { e.stopPropagation(); toggleCropMode(layer); });
+        cropRow.appendChild(cropBtn);
+        const isCropped = layer.crop.x !== 0 || layer.crop.y !== 0 || layer.crop.w !== layer.workW || layer.crop.h !== layer.workH;
+        if (isCropped) {
+          const resetCropBtn = document.createElement('button');
+          resetCropBtn.className = 'btn btn-ghost small-btn';
+          resetCropBtn.textContent = 'Crop zurücksetzen';
+          resetCropBtn.addEventListener('click', e => { e.stopPropagation(); resetLayerCrop(layer); });
+          cropRow.appendChild(resetCropBtn);
+        }
+        body.appendChild(cropRow);
       }
-      body.appendChild(cropRow);
 
       card.appendChild(body);
     }
@@ -406,11 +462,155 @@ function buildInlineSlider(label, min, max, step, value, onInput) {
   return row;
 }
 
+/* Same as buildInlineSlider but shows the raw (unrounded) value — for
+   decimal multipliers like spam-mode line spacing where Math.round would
+   hide the actual value (e.g. "1.7×" collapsing to "2"). */
+function buildInlineSliderPrecise(label, min, max, step, value, onInput) {
+  const row = document.createElement('div');
+  row.className = 'param-row';
+  const labelRow = document.createElement('div');
+  labelRow.className = 'param-label-row';
+  const lbl = document.createElement('span'); lbl.className = 'param-label'; lbl.textContent = label;
+  const val = document.createElement('span'); val.className = 'param-value'; val.textContent = value;
+  labelRow.append(lbl, val);
+  const input = document.createElement('input');
+  input.type = 'range'; input.min = min; input.max = max; input.step = step; input.value = value;
+  input.addEventListener('click', e => e.stopPropagation());
+  input.addEventListener('input', () => {
+    val.textContent = input.value;
+    onInput(parseFloat(input.value));
+  });
+  row.append(labelRow, input);
+  return row;
+}
+
+/* Text/font/spam fields change the rendered raster's size, so they need a
+   full remeasure (async) after mutating the layer. Color/align only change
+   how the existing raster looks, not its size — dirty flag is enough. */
+function buildTextLayerPanel(layer) {
+  const wrap = document.createElement('div');
+  wrap.style.display = 'flex';
+  wrap.style.flexDirection = 'column';
+  wrap.style.gap = '0.55rem';
+
+  const textarea = document.createElement('textarea');
+  textarea.className = 'text-input-area';
+  textarea.value = layer.text;
+  textarea.rows = 2;
+  textarea.addEventListener('click', e => e.stopPropagation());
+  textarea.addEventListener('input', async () => {
+    layer.text = textarea.value;
+    await remeasureTextLayer(layer);
+    scheduleRender();
+  });
+  wrap.appendChild(textarea);
+
+  const fontSelect = document.createElement('select');
+  for (const font of TEXT_FONTS) {
+    const opt = document.createElement('option');
+    opt.value = font.id; opt.textContent = font.label;
+    if (font.cssFamily === layer.fontFamily) opt.selected = true;
+    fontSelect.appendChild(opt);
+  }
+  fontSelect.addEventListener('click', e => e.stopPropagation());
+
+  const weightSelect = document.createElement('select');
+  function rebuildWeightSelect() {
+    const font = TEXT_FONTS.find(f => f.id === fontSelect.value) || TEXT_FONTS[0];
+    weightSelect.innerHTML = '';
+    for (const [val, text] of font.weights) {
+      const opt = document.createElement('option');
+      opt.value = val; opt.textContent = text;
+      if (val === layer.fontWeight) opt.selected = true;
+      weightSelect.appendChild(opt);
+    }
+    if (!font.weights.some(([val]) => val === layer.fontWeight)) {
+      weightSelect.value = font.weights[0][0];
+    }
+  }
+  rebuildWeightSelect();
+  weightSelect.addEventListener('click', e => e.stopPropagation());
+
+  fontSelect.addEventListener('change', async () => {
+    const font = TEXT_FONTS.find(f => f.id === fontSelect.value);
+    layer.fontFamily = font.cssFamily;
+    rebuildWeightSelect();
+    layer.fontWeight = weightSelect.value;
+    await remeasureTextLayer(layer);
+    scheduleRender();
+  });
+  weightSelect.addEventListener('change', async () => {
+    layer.fontWeight = weightSelect.value;
+    await remeasureTextLayer(layer);
+    scheduleRender();
+  });
+  wrap.appendChild(fontSelect);
+  wrap.appendChild(weightSelect);
+
+  wrap.appendChild(buildInlineSlider('Schriftgröße', 8, 400, 1, Math.round(layer.fontSize), async v => {
+    layer.fontSize = v;
+    await remeasureTextLayer(layer);
+    scheduleRender();
+  }));
+
+  const colorInput = document.createElement('input');
+  colorInput.type = 'color'; colorInput.className = 'param-color';
+  colorInput.value = layer.color;
+  colorInput.addEventListener('click', e => e.stopPropagation());
+  colorInput.addEventListener('input', () => { layer.color = colorInput.value; layer.dirty = true; scheduleRender(); });
+  wrap.appendChild(colorInput);
+
+  const alignSelect = document.createElement('select');
+  for (const [val, text] of [['left', 'Links'], ['center', 'Mitte'], ['right', 'Rechts']]) {
+    const opt = document.createElement('option');
+    opt.value = val; opt.textContent = text;
+    if (val === layer.align) opt.selected = true;
+    alignSelect.appendChild(opt);
+  }
+  alignSelect.addEventListener('click', e => e.stopPropagation());
+  alignSelect.addEventListener('change', () => { layer.align = alignSelect.value; layer.dirty = true; scheduleRender(); });
+  wrap.appendChild(alignSelect);
+
+  const spamPanel = document.createElement('div');
+  spamPanel.className = 'spam-panel';
+  spamPanel.appendChild(buildInlineSlider('Spam-Modus: Anzahl', 1, 30, 1, layer.spamCount, async v => {
+    layer.spamCount = v;
+    await remeasureTextLayer(layer);
+    scheduleRender();
+  }));
+  spamPanel.appendChild(buildInlineSliderPrecise('Abstand', 0.5, 3, 0.1, layer.spamSpacing, async v => {
+    layer.spamSpacing = v;
+    await remeasureTextLayer(layer);
+    scheduleRender();
+  }));
+  const offsetRow = buildInlineSlider('Versatz', 0, 150, 1, layer.spamOffsetX, async v => {
+    layer.spamOffsetX = v;
+    await remeasureTextLayer(layer);
+    scheduleRender();
+  });
+  const diceBtn = document.createElement('button');
+  diceBtn.className = 'icon-btn'; diceBtn.title = 'Neu würfeln'; diceBtn.textContent = '🎲';
+  diceBtn.style.marginTop = '0.3rem';
+  diceBtn.addEventListener('click', async e => {
+    e.stopPropagation();
+    layer.spamSeed = Math.floor(Math.random() * 1e9);
+    await remeasureTextLayer(layer);
+    scheduleRender();
+  });
+  offsetRow.appendChild(diceBtn);
+  spamPanel.appendChild(offsetRow);
+  wrap.appendChild(spamPanel);
+
+  return wrap;
+}
+
 function applyLayerTransform(layer) {
   const scale = layer.basePixelScale * layer.scalePct / 100;
   const rotated = layer.rotation === 90 || layer.rotation === 270;
-  layer.w = (rotated ? layer.crop.h : layer.crop.w) * scale;
-  layer.h = (rotated ? layer.crop.w : layer.crop.h) * scale;
+  const fullW = layer.type === 'text' ? layer.workW : layer.crop.w;
+  const fullH = layer.type === 'text' ? layer.workH : layer.crop.h;
+  layer.w = (rotated ? fullH : fullW) * scale;
+  layer.h = (rotated ? fullW : fullH) * scale;
 }
 
 function resizeLayer(layer, scalePct) {
@@ -881,10 +1081,72 @@ function buildMaskAlpha(mask, w, h) {
   return alpha;
 }
 
-/* ── Compositing pipeline ── */
-async function renderLayerCanvas(layer) {
-  if (layer.renderedCanvas && !layer.dirty) return layer.renderedCanvas;
-  const cropW = Math.max(1, Math.round(layer.crop.w)), cropH = Math.max(1, Math.round(layer.crop.h));
+/* ── Text rendering ── */
+const TEXT_CANVAS_MAX_DIM = 8000; // guards against pathological spamCount×fontSize×spacing canvases
+
+/* Builds the raw (unrotated, un-effected) text raster for a text layer at
+   the given resolution factor (1 = live preview, >1 = export). Spam-mode
+   copies are stacked vertically within this single canvas, each jittered
+   horizontally by a seeded RNG (same mulberry32 pattern the effect stack
+   already uses for its own dice-reroll params, see js/effects.js). */
+async function renderTextContent(layer, factor) {
+  const fontPx = Math.max(1, Math.round(layer.fontSize * factor));
+  const fontStr = `${layer.fontWeight} ${fontPx}px "${layer.fontFamily}"`;
+  try { await document.fonts.load(fontStr, layer.text || ' '); } catch (e) { /* fall back to default font */ }
+
+  const measureCx = document.createElement('canvas').getContext('2d');
+  measureCx.font = fontStr;
+  const lines = (layer.text || '').split('\n');
+  const lineWidths = lines.map(l => measureCx.measureText(l).width);
+  const maxLineWidth = Math.max(1, ...lineWidths);
+  const lineHeight = fontPx * 1.2;
+  const spamCount = Math.max(1, Math.round(layer.spamCount) || 1);
+  const blockHeight = lineHeight * lines.length;
+  const spacing = blockHeight * (layer.spamSpacing || 1);
+  const offsetX = (layer.spamOffsetX || 0) * factor;
+
+  const rand = mulberry32(layer.spamSeed || 1);
+  const jitters = [];
+  for (let i = 0; i < spamCount; i++) jitters.push(offsetX > 0 ? (rand() * 2 - 1) * offsetX : 0);
+  const maxJitter = Math.max(0, ...jitters.map(Math.abs));
+
+  const width = Math.min(TEXT_CANVAS_MAX_DIM, Math.round(maxLineWidth + maxJitter * 2) + 4);
+  const height = Math.min(TEXT_CANVAS_MAX_DIM, Math.max(1, Math.round(spacing * spamCount)) + 4);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width; canvas.height = height;
+  const cx = canvas.getContext('2d');
+  cx.font = fontStr;
+  cx.fillStyle = layer.color;
+  cx.textBaseline = 'top';
+  cx.textAlign = 'center';
+
+  for (let s = 0; s < spamCount; s++) {
+    const jx = jitters[s];
+    let y = 2 + s * spacing;
+    for (let li = 0; li < lines.length; li++) {
+      let x;
+      if (layer.align === 'left') x = width / 2 - maxLineWidth / 2 + lineWidths[li] / 2 + jx;
+      else if (layer.align === 'right') x = width / 2 + maxLineWidth / 2 - lineWidths[li] / 2 + jx;
+      else x = width / 2 + jx;
+      cx.fillText(lines[li], x, y);
+      y += lineHeight;
+    }
+  }
+
+  return { canvas, width, height };
+}
+
+/* Shared "build the raw source canvas" step for both the live-preview and
+   export render paths — text layers rasterize text directly at the target
+   factor, image layers extract the (possibly cropped) source image. */
+async function getLayerSource(layer, factor) {
+  if (layer.type === 'text') {
+    const { canvas, width, height } = await renderTextContent(layer, factor);
+    return { srcCanvas: canvas, cropW: width, cropH: height };
+  }
+  const cropW = Math.max(1, Math.round(layer.crop.w * factor));
+  const cropH = Math.max(1, Math.round(layer.crop.h * factor));
   const srcCanvas = document.createElement('canvas');
   srcCanvas.width = cropW; srcCanvas.height = cropH;
   const srcCx = srcCanvas.getContext('2d');
@@ -892,6 +1154,30 @@ async function renderLayerCanvas(layer) {
   srcCx.drawImage(layer.img,
     layer.crop.x * natScale, layer.crop.y * natScale, layer.crop.w * natScale, layer.crop.h * natScale,
     0, 0, cropW, cropH);
+  return { srcCanvas, cropW, cropH };
+}
+
+/* Recomputes a text layer's measured workW/workH after a text/font/spam
+   change, then re-derives w/h (generalized applyLayerTransform) and
+   recenters x/y around the layer's previous center so editing text doesn't
+   visually jump. Must run before scheduleRender() for any field that can
+   change the rendered raster's size. */
+async function remeasureTextLayer(layer) {
+  const { width, height } = await renderTextContent(layer, 1);
+  const hadSize = layer.workW > 0 || layer.workH > 0;
+  const cx = hadSize ? layer.x + layer.w / 2 : canvasW / 2;
+  const cy = hadSize ? layer.y + layer.h / 2 : canvasH / 2;
+  layer.workW = width; layer.workH = height;
+  applyLayerTransform(layer);
+  layer.x = cx - layer.w / 2;
+  layer.y = cy - layer.h / 2;
+  layer.dirty = true;
+}
+
+/* ── Compositing pipeline ── */
+async function renderLayerCanvas(layer) {
+  if (layer.renderedCanvas && !layer.dirty) return layer.renderedCanvas;
+  const { srcCanvas, cropW, cropH } = await getLayerSource(layer, 1);
 
   const rotation = layer.rotation || 0;
   const rotated = rotation === 90 || rotation === 270;
@@ -998,7 +1284,7 @@ function addImageLayer(file) {
     }
 
     const layer = {
-      uid: uidCounter++, name: file.name || `Ebene ${layers.length + 1}`,
+      uid: uidCounter++, name: file.name || `Ebene ${layers.length + 1}`, type: 'image',
       img, workW, workH, x, y, w, h,
       crop: { x: 0, y: 0, w: workW, h: workH },
       basePixelScale: w / workW, scalePct: 100,
@@ -1023,6 +1309,31 @@ function addImageLayers(fileList) {
 fileInput.addEventListener('change', () => { addImageLayers(fileInput.files); fileInput.value = ''; });
 uploadZone.addEventListener('click', () => fileInput.click());
 document.getElementById('addImageBtn').addEventListener('click', () => fileInput.click());
+
+async function addTextLayer() {
+  if (canvasW === 0) { // no canvas yet — no image to derive dimensions from, use the "Neue Leinwand" default
+    canvasW = 1200; canvasH = 800; canvasBg = '#ffffff';
+    editorArea.classList.add('has-image');
+    dimText.textContent = `${canvasW}×${canvasH}px`;
+  }
+  const layer = {
+    uid: uidCounter++, name: `Text ${layers.length + 1}`, type: 'text',
+    text: 'TEXT', fontFamily: 'Syne', fontWeight: '700', fontSize: 80,
+    color: '#ffffff', align: 'center',
+    spamCount: 1, spamSpacing: 1.1, spamOffsetX: 0, spamSeed: 1,
+    workW: 0, workH: 0, x: 0, y: 0, w: 0, h: 0, basePixelScale: 1, scalePct: 100,
+    rotation: 0, flipH: false, flipV: false,
+    blendMode: 'source-over', opacity: 100, visible: true, collapsed: false, stack: [], dirty: true,
+  };
+  layers.push(layer);
+  activeLayerId = layer.uid;
+  canvas.classList.add('layer-draggable');
+  await remeasureTextLayer(layer); // first call: no prior size yet → centers on canvas center
+  renderLayerList();
+  renderStackUI();
+  scheduleRender();
+}
+document.getElementById('addTextBtn').addEventListener('click', addTextLayer);
 
 ['dragover', 'dragenter'].forEach(evt =>
   uploadZone.addEventListener(evt, e => { e.preventDefault(); uploadZone.classList.add('drag-over'); })
@@ -1382,15 +1693,7 @@ function scaleParams(def, params, factor) {
 }
 
 async function renderLayerAtScale(layer, factor) {
-  const cropW = Math.max(1, Math.round(layer.crop.w * factor));
-  const cropH = Math.max(1, Math.round(layer.crop.h * factor));
-  const srcCanvas = document.createElement('canvas');
-  srcCanvas.width = cropW; srcCanvas.height = cropH;
-  const srcCx = srcCanvas.getContext('2d');
-  const natScale = layer.img.naturalWidth / layer.workW;
-  srcCx.drawImage(layer.img,
-    layer.crop.x * natScale, layer.crop.y * natScale, layer.crop.w * natScale, layer.crop.h * natScale,
-    0, 0, cropW, cropH);
+  const { srcCanvas, cropW, cropH } = await getLayerSource(layer, factor);
 
   const rotation = layer.rotation || 0;
   const rotated = rotation === 90 || rotation === 270;
