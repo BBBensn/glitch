@@ -768,6 +768,7 @@ input[type="range"]::-moz-range-thumb {
 .video-preview {
   display: none;
   width: 100%;
+  max-height: 42vh;
   border-radius: 12px;
   margin-top: 1.25rem;
   background: #000;

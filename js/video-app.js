@@ -42,7 +42,7 @@ let activeClipDrag = null; // { clip, target: 'in'|'out'|'cut', canvas, isFirst 
 /* Which of the collapsible settings cards are open — shared across clips
    (not per-clip) since only one clip's panel is visible at a time and a
    "I never touch Datamosh" preference should stick when switching clips. */
-const sectionOpen = { fit: true, color: true, mosh: true, glitch: true };
+const sectionOpen = { fit: true, color: true, tint: true, mosh: true, glitch: true };
 
 /* 0 = not yet established — the first clip's own aspect ratio (read back
    from the server via X-Video-Width/Height headers) seeds this, exactly
@@ -70,6 +70,10 @@ function defaultClipGlitch() {
 
 function defaultClipFit() {
   return { mode: 'cover', panX: 0, panY: 0 };
+}
+
+function defaultClipTint() {
+  return { enabled: false, color: '#00ff66', mix: 60 };
 }
 
 function setStatus(state, text) {
@@ -129,7 +133,7 @@ function createClip(file) {
   const clip = {
     uid: uidCounter++, name: file.name, file, parsed: null, error: null, needsReprepare: false,
     ...defaultClipColor(), ...defaultClipDatamosh(), ...defaultClipGlitch(),
-    fit: defaultClipFit(),
+    fit: defaultClipFit(), tint: defaultClipTint(),
   };
   clips.push(clip);
   if (activeClipId === null) activeClipId = clip.uid;
@@ -439,6 +443,41 @@ function renderClipDetail() {
     body.appendChild(applyAllColorBtn);
   }));
 
+  clipDetailEl.appendChild(buildCollapsibleSection('tint', 'Farbstich', body => {
+    const enableRow = document.createElement('label');
+    enableRow.className = 'param-checkbox';
+    const enableInput = document.createElement('input');
+    enableInput.type = 'checkbox';
+    enableInput.checked = clip.tint.enabled;
+    enableInput.addEventListener('change', () => { clip.tint.enabled = enableInput.checked; });
+    enableRow.append(enableInput, document.createTextNode('Aktiv'));
+    body.appendChild(enableRow);
+
+    const colorRow = document.createElement('div');
+    colorRow.className = 'param-row';
+    const colorLabel = document.createElement('span');
+    colorLabel.className = 'param-label';
+    colorLabel.textContent = 'Farbe';
+    const colorInput = document.createElement('input');
+    colorInput.type = 'color';
+    colorInput.className = 'param-color';
+    colorInput.value = clip.tint.color;
+    colorInput.addEventListener('input', () => { clip.tint.color = colorInput.value; });
+    colorRow.append(colorLabel, colorInput);
+    body.appendChild(colorRow);
+
+    body.appendChild(buildSlider('Stärke', 0, 100, 1, clip.tint.mix, v => { clip.tint.mix = v; }));
+
+    const applyAllTintBtn = document.createElement('button');
+    applyAllTintBtn.className = 'btn small-btn';
+    applyAllTintBtn.textContent = 'Farbstich auf alle Clips anwenden';
+    applyAllTintBtn.addEventListener('click', () => {
+      const tint = { ...clip.tint };
+      clips.forEach(c => { if (c !== clip) c.tint = { ...tint }; });
+    });
+    body.appendChild(applyAllTintBtn);
+  }));
+
   clipDetailEl.appendChild(buildCollapsibleSection('mosh', 'Datamosh', body => {
     body.appendChild(buildSlider('Wiederhol-Fenster (Frames)', 0, 30, 1, clip.dupWindow, v => { clip.dupWindow = v; }));
     body.appendChild(buildSlider('Wiederholungen', 0, 20, 1, clip.dupCount, v => { clip.dupCount = v; }));
@@ -611,7 +650,7 @@ function buildSegmentsPayload(colorClips, mergeResult) {
     return {
       start: seg.start, end: seg.end,
       brightness: c.brightness, contrast: c.contrast, saturation: c.saturation,
-      hue: c.hue, invert: c.invert, bw: c.bw,
+      hue: c.hue, invert: c.invert, bw: c.bw, tint: c.tint,
       rgbShift: c.rgbShift, noise: c.noise, pixelate: c.pixelate, scanlines: c.scanlines,
     };
   });

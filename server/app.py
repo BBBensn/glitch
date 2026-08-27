@@ -3,6 +3,7 @@ renders edited (byte-corrupted) AVIs back to playable MP4. All actual
 frame manipulation happens client-side in the browser; this service only
 wraps ffmpeg for the two steps that need a real codec."""
 
+import colorsys
 import json
 import os
 import re
@@ -55,6 +56,19 @@ def valid_bg(bg):
     if isinstance(bg, str) and HEX_COLOR_RE.match(bg):
         return bg
     return '#000000'
+
+
+def hex_to_hue_sat(hex_color):
+    """Derives ffmpeg colorize's hue (0-360) and saturation (0-1) from a
+    hex color the user picked, so 'choose a color' maps directly onto the
+    filter instead of exposing raw hue/saturation sliders."""
+    if not (isinstance(hex_color, str) and HEX_COLOR_RE.match(hex_color)):
+        hex_color = '#00ff66'
+    r = int(hex_color[1:3], 16) / 255
+    g = int(hex_color[3:5], 16) / 255
+    b = int(hex_color[5:7], 16) / 255
+    h, _l, s = colorsys.rgb_to_hls(r, g, b)
+    return h * 360, s
 
 
 def probe_dimensions(path):
@@ -168,11 +182,17 @@ def prepare():
 
 
 def build_segment_filter(segments):
-    """One eq/hue/negate/glitch-filter chain per clip segment (frame-range
-    within the merged video), then concat back together — lets each
-    original clip keep its own color grading and glitch filters in the
-    final render. Filter syntax verified against real ffmpeg before this
-    was wired in (see docs/changelogs)."""
+    """One eq/hue/negate/tint/glitch-filter chain per clip segment
+    (frame-range within the merged video), then concat back together —
+    lets each original clip keep its own color grading and glitch filters
+    in the final render. Filter syntax verified against real ffmpeg before
+    this was wired in (see docs/changelogs).
+
+    Tint (colorize) needs a small branch (split -> colorize -> blend)
+    instead of a plain comma-chained filter, since it has to mix the
+    colorized version back with the original at an adjustable strength —
+    unlike every other stage here, which is a single-input/single-output
+    filter that can just be appended to the linear chain."""
     if not segments:
         return None
     try:
@@ -184,31 +204,32 @@ def build_segment_filter(segments):
             c = 1 + clamp(float(seg.get('contrast', 0)), -100, 100) / 100
             s = 1 + clamp(float(seg.get('saturation', 0)), -100, 100) / 100
             h = clamp(float(seg.get('hue', 0)), -180, 180)
-            chain = (f"[0:v]trim=start_frame={start}:end_frame={end},setpts=PTS-STARTPTS,"
-                     f"eq=brightness={b}:contrast={c}:saturation={s}")
+            base_chain = (f"trim=start_frame={start}:end_frame={end},setpts=PTS-STARTPTS,"
+                          f"eq=brightness={b}:contrast={c}:saturation={s}")
             if seg.get('bw'):
-                chain += ",hue=s=0"
+                base_chain += ",hue=s=0"
             if h:
-                chain += f",hue=h={h}"
+                base_chain += f",hue=h={h}"
             if seg.get('invert'):
-                chain += ",negate"
+                base_chain += ",negate"
 
+            tail_chain = ""
             rgb_shift = seg.get('rgbShift') or {}
             if rgb_shift.get('enabled'):
                 amount = int(clamp(float(rgb_shift.get('amount', 8)), 0, 20))
                 if amount:
-                    chain += f",rgbashift=rh={amount}:bh=-{amount}"
+                    tail_chain += f",rgbashift=rh={amount}:bh=-{amount}"
 
             noise = seg.get('noise') or {}
             if noise.get('enabled'):
                 strength = int(clamp(float(noise.get('strength', 20)), 0, 100))
                 if strength:
-                    chain += f",noise=alls={strength}:allf=t"
+                    tail_chain += f",noise=alls={strength}:allf=t"
 
             pixelate = seg.get('pixelate') or {}
             if pixelate.get('enabled'):
                 block = int(clamp(float(pixelate.get('blockSize', 8)), 2, 40))
-                chain += f",scale=iw/{block}:ih/{block}:flags=neighbor,scale=iw*{block}:ih*{block}:flags=neighbor"
+                tail_chain += f",scale=iw/{block}:ih/{block}:flags=neighbor,scale=iw*{block}:ih*{block}:flags=neighbor"
 
             scanlines = seg.get('scanlines') or {}
             if scanlines.get('enabled'):
@@ -216,11 +237,27 @@ def build_segment_filter(segments):
                 factor = 1 - intensity / 100 * 0.8
                 # lum()/cb()/cr() must be lowercase — verified against ffmpeg 8.0.1,
                 # uppercase (as some stale docs show) fails with "Unknown function".
-                chain += (",geq=lum='if(mod(floor(Y/2)\\,2)\\,lum(X\\,Y)*"
-                           f"{factor}\\,lum(X\\,Y))':cb='cb(X,Y)':cr='cr(X,Y)'")
+                tail_chain += (",geq=lum='if(mod(floor(Y/2)\\,2)\\,lum(X\\,Y)*"
+                                f"{factor}\\,lum(X\\,Y))':cb='cb(X,Y)':cr='cr(X,Y)'")
 
-            chain += f"[s{i}]"
-            parts.append(chain)
+            tint = seg.get('tint') or {}
+            if tint.get('enabled'):
+                hue_deg, sat = hex_to_hue_sat(tint.get('color', '#00ff66'))
+                mix = clamp(float(tint.get('mix', 60)), 0, 100) / 100
+                # blend's all_opacity is the BASE (bottom/original) layer's
+                # visibility, not the top layer's — opacity=0 shows the top
+                # (colored) input fully, opacity=1 shows only the base.
+                # Counterintuitive, verified empirically; inverted here so
+                # mix=100% (user wants full tint) -> opacity=0.
+                opacity = 1 - mix
+                pre, base_lbl, src_lbl, colored_lbl = (
+                    f"seg{i}pre", f"seg{i}base", f"seg{i}src", f"seg{i}colored")
+                parts.append(f"[0:v]{base_chain}[{pre}]")
+                parts.append(f"[{pre}]split=2[{base_lbl}][{src_lbl}]")
+                parts.append(f"[{src_lbl}]colorize=hue={hue_deg:.2f}:saturation={sat:.3f}:lightness=0.5:mix=1[{colored_lbl}]")
+                parts.append(f"[{base_lbl}][{colored_lbl}]blend=all_mode=normal:all_opacity={opacity:.3f}{tail_chain}[s{i}]")
+            else:
+                parts.append(f"[0:v]{base_chain}{tail_chain}[s{i}]")
         concat_inputs = ''.join(f"[s{i}]" for i in range(len(segments)))
         parts.append(f"{concat_inputs}concat=n={len(segments)}:v=1:a=0[outv]")
         return ';'.join(parts)
