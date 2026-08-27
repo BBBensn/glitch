@@ -317,6 +317,49 @@ Effects.wave = function (imageData, width, height, p) {
   }
 };
 
+/* ── Pixel Drag (streaky directional smear, with slight per-channel offset
+   for a chromatic-aberration-in-motion look) ── */
+Effects.pixelDrag = function (imageData, width, height, p) {
+  const src = new Uint8ClampedArray(imageData.data);
+  const data = imageData.data;
+  const rand = mulberry32(p.seed || 1);
+  const vertical = p.direction !== 'horizontal';
+  const lines = vertical ? width : height;
+  const lineLen = vertical ? height : width;
+  const chroma = p.chroma || 0;
+
+  for (let i = 0; i < lines; i++) {
+    if (rand() * 100 > p.density) continue;
+    const maxLen = Math.max(1, Math.round(lineLen * (p.length / 100)));
+    const dragLen = 1 + Math.floor(rand() * maxLen);
+    const start = Math.floor(rand() * Math.max(1, lineLen - 1));
+    const rOff = Math.round((rand() - 0.5) * 2 * chroma);
+    const bOff = Math.round((rand() - 0.5) * 2 * chroma);
+    const srcPosR = clampInt(start + rOff, 0, lineLen - 1);
+    const srcPosB = clampInt(start + bOff, 0, lineLen - 1);
+
+    for (let j = 1; j <= dragLen && start + j < lineLen; j++) {
+      const dstPos = start + j;
+      let dstIdx, srcIdxR, srcIdxG, srcIdxB;
+      if (vertical) {
+        dstIdx = (dstPos * width + i) * 4;
+        srcIdxR = (srcPosR * width + i) * 4;
+        srcIdxG = (start * width + i) * 4;
+        srcIdxB = (srcPosB * width + i) * 4;
+      } else {
+        dstIdx = (i * width + dstPos) * 4;
+        srcIdxR = (i * width + srcPosR) * 4;
+        srcIdxG = (i * width + start) * 4;
+        srcIdxB = (i * width + srcPosB) * 4;
+      }
+      data[dstIdx] = src[srcIdxR];
+      data[dstIdx + 1] = src[srcIdxG + 1];
+      data[dstIdx + 2] = src[srcIdxB + 2];
+      data[dstIdx + 3] = src[srcIdxG + 3];
+    }
+  }
+};
+
 /* ── Basic Adjustments (Helligkeit / Kontrast / Sättigung) ── */
 Effects.basicAdjust = function (imageData, width, height, p) {
   const data = imageData.data;

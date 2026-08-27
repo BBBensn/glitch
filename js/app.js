@@ -132,6 +132,18 @@ const EFFECT_DEFS = [
     ],
   },
   {
+    id: 'pixeldrag', label: 'Pixel Drag', color: '#fb923c',
+    apply: Effects.pixelDrag,
+    params: [
+      { key: 'direction', label: 'Richtung', type: 'select', default: 'vertical',
+        options: [['vertical', 'Vertikal'], ['horizontal', 'Horizontal']] },
+      { key: 'density', label: 'Dichte', type: 'range', min: 0, max: 100, step: 1, default: 45 },
+      { key: 'length', label: 'Länge (%)', type: 'range', min: 1, max: 100, step: 1, default: 35 },
+      { key: 'chroma', label: 'Farbversatz (px)', type: 'range', min: 0, max: 20, step: 1, default: 4, scalesWithResolution: true },
+      { key: 'seed', label: '', type: 'seed', default: 1 },
+    ],
+  },
+  {
     id: 'jpegcrunch', label: 'JPEG Crunch', color: '#C9B6BE',
     apply: Effects.jpegCrunch,
     params: [
@@ -248,6 +260,12 @@ function renderLayerList() {
     handle.addEventListener('dragend', () => card.classList.remove('dragging'));
     header.appendChild(handle);
 
+    const collapseBtn = document.createElement('button');
+    collapseBtn.className = 'icon-btn'; collapseBtn.title = layer.collapsed ? 'Aufklappen' : 'Einklappen';
+    collapseBtn.textContent = layer.collapsed ? '▸' : '▾';
+    collapseBtn.addEventListener('click', e => { e.stopPropagation(); layer.collapsed = !layer.collapsed; renderLayerList(); });
+    header.appendChild(collapseBtn);
+
     const visBtn = document.createElement('button');
     visBtn.className = 'icon-btn'; visBtn.title = layer.visible ? 'Ausblenden' : 'Einblenden';
     visBtn.textContent = layer.visible ? '👁' : '🚫';
@@ -281,43 +299,70 @@ function renderLayerList() {
     header.appendChild(actions);
     card.appendChild(header);
 
-    const body = document.createElement('div');
-    body.className = 'layer-body';
+    if (!layer.collapsed) {
+      const body = document.createElement('div');
+      body.className = 'layer-body';
 
-    const blendSelect = document.createElement('select');
-    for (const [val, text] of BLEND_MODES) {
-      const opt = document.createElement('option');
-      opt.value = val; opt.textContent = text;
-      if (val === layer.blendMode) opt.selected = true;
-      blendSelect.appendChild(opt);
+      const blendSelect = document.createElement('select');
+      for (const [val, text] of BLEND_MODES) {
+        const opt = document.createElement('option');
+        opt.value = val; opt.textContent = text;
+        if (val === layer.blendMode) opt.selected = true;
+        blendSelect.appendChild(opt);
+      }
+      blendSelect.addEventListener('click', e => e.stopPropagation());
+      blendSelect.addEventListener('change', () => { layer.blendMode = blendSelect.value; scheduleRender(); });
+      body.appendChild(blendSelect);
+
+      body.appendChild(buildInlineSlider('Deckkraft', 0, 100, 1, layer.opacity, v => { layer.opacity = v; scheduleRender(); }));
+      body.appendChild(buildInlineSlider('Größe', 10, 300, 1, Math.round(layer.scalePct), v => { resizeLayer(layer, v); scheduleRender(); }));
+
+      const transformRow = document.createElement('div');
+      transformRow.className = 'inline-btn-row';
+      const rotateCCW = document.createElement('button');
+      rotateCCW.className = 'icon-btn'; rotateCCW.title = 'Nach links drehen'; rotateCCW.textContent = '↺';
+      rotateCCW.addEventListener('click', e => { e.stopPropagation(); rotateLayer(layer, -90); });
+      transformRow.appendChild(rotateCCW);
+      const rotateCW = document.createElement('button');
+      rotateCW.className = 'icon-btn'; rotateCW.title = 'Nach rechts drehen'; rotateCW.textContent = '↻';
+      rotateCW.addEventListener('click', e => { e.stopPropagation(); rotateLayer(layer, 90); });
+      transformRow.appendChild(rotateCW);
+      const flipHBtn = document.createElement('button');
+      flipHBtn.className = 'icon-btn' + (layer.flipH ? ' toggled' : ''); flipHBtn.title = 'Horizontal spiegeln'; flipHBtn.textContent = '⬌';
+      flipHBtn.addEventListener('click', e => { e.stopPropagation(); toggleFlip(layer, 'h'); });
+      transformRow.appendChild(flipHBtn);
+      const flipVBtn = document.createElement('button');
+      flipVBtn.className = 'icon-btn' + (layer.flipV ? ' toggled' : ''); flipVBtn.title = 'Vertikal spiegeln'; flipVBtn.textContent = '⬍';
+      flipVBtn.addEventListener('click', e => { e.stopPropagation(); toggleFlip(layer, 'v'); });
+      transformRow.appendChild(flipVBtn);
+      body.appendChild(transformRow);
+
+      const cropRow = document.createElement('div');
+      cropRow.className = 'inline-btn-row';
+      const cropBtn = document.createElement('button');
+      cropBtn.className = 'btn btn-ghost small-btn' + (cropModeLayerId === layer.uid ? ' active-toggle' : '');
+      cropBtn.textContent = cropModeLayerId === layer.uid ? 'Zuschneiden ✓' : 'Zuschneiden';
+      cropBtn.addEventListener('click', e => { e.stopPropagation(); toggleCropMode(layer); });
+      cropRow.appendChild(cropBtn);
+      const isCropped = layer.crop.x !== 0 || layer.crop.y !== 0 || layer.crop.w !== layer.workW || layer.crop.h !== layer.workH;
+      if (isCropped) {
+        const resetCropBtn = document.createElement('button');
+        resetCropBtn.className = 'btn btn-ghost small-btn';
+        resetCropBtn.textContent = 'Crop zurücksetzen';
+        resetCropBtn.addEventListener('click', e => { e.stopPropagation(); resetLayerCrop(layer); });
+        cropRow.appendChild(resetCropBtn);
+      }
+      body.appendChild(cropRow);
+
+      card.appendChild(body);
     }
-    blendSelect.addEventListener('click', e => e.stopPropagation());
-    blendSelect.addEventListener('change', () => { layer.blendMode = blendSelect.value; scheduleRender(); });
-    body.appendChild(blendSelect);
 
-    body.appendChild(buildInlineSlider('Deckkraft', 0, 100, 1, layer.opacity, v => { layer.opacity = v; scheduleRender(); }));
-    body.appendChild(buildInlineSlider('Größe', 10, 300, 1, Math.round(layer.scalePct), v => { resizeLayer(layer, v); scheduleRender(); }));
-
-    const cropRow = document.createElement('div');
-    cropRow.className = 'inline-btn-row';
-    const cropBtn = document.createElement('button');
-    cropBtn.className = 'btn btn-ghost small-btn' + (cropModeLayerId === layer.uid ? ' active-toggle' : '');
-    cropBtn.textContent = cropModeLayerId === layer.uid ? 'Zuschneiden ✓' : 'Zuschneiden';
-    cropBtn.addEventListener('click', e => { e.stopPropagation(); toggleCropMode(layer); });
-    cropRow.appendChild(cropBtn);
-    const isCropped = layer.crop.x !== 0 || layer.crop.y !== 0 || layer.crop.w !== layer.workW || layer.crop.h !== layer.workH;
-    if (isCropped) {
-      const resetCropBtn = document.createElement('button');
-      resetCropBtn.className = 'btn btn-ghost small-btn';
-      resetCropBtn.textContent = 'Crop zurücksetzen';
-      resetCropBtn.addEventListener('click', e => { e.stopPropagation(); resetLayerCrop(layer); });
-      cropRow.appendChild(resetCropBtn);
-    }
-    body.appendChild(cropRow);
-
-    card.appendChild(body);
-
-    card.addEventListener('click', () => { activeLayerId = layer.uid; renderLayerList(); renderStackUI(); });
+    card.addEventListener('click', () => {
+      const wasActive = activeLayerId === layer.uid;
+      activeLayerId = layer.uid;
+      if (!wasActive) layer.collapsed = false;
+      renderLayerList(); renderStackUI();
+    });
 
     card.addEventListener('dragover', e => { e.preventDefault(); card.classList.add('drag-over'); });
     card.addEventListener('dragleave', () => card.classList.remove('drag-over'));
@@ -363,8 +408,9 @@ function buildInlineSlider(label, min, max, step, value, onInput) {
 
 function applyLayerTransform(layer) {
   const scale = layer.basePixelScale * layer.scalePct / 100;
-  layer.w = layer.crop.w * scale;
-  layer.h = layer.crop.h * scale;
+  const rotated = layer.rotation === 90 || layer.rotation === 270;
+  layer.w = (rotated ? layer.crop.h : layer.crop.w) * scale;
+  layer.h = (rotated ? layer.crop.w : layer.crop.h) * scale;
 }
 
 function resizeLayer(layer, scalePct) {
@@ -372,6 +418,23 @@ function resizeLayer(layer, scalePct) {
   layer.scalePct = scalePct;
   applyLayerTransform(layer);
   layer.x = cx - layer.w / 2; layer.y = cy - layer.h / 2;
+}
+
+function rotateLayer(layer, delta) {
+  const cx = layer.x + layer.w / 2, cy = layer.y + layer.h / 2;
+  layer.rotation = ((layer.rotation || 0) + delta + 360) % 360;
+  applyLayerTransform(layer);
+  layer.x = cx - layer.w / 2; layer.y = cy - layer.h / 2;
+  layer.dirty = true;
+  renderLayerList();
+  scheduleRender();
+}
+
+function toggleFlip(layer, axis) {
+  if (axis === 'h') layer.flipH = !layer.flipH; else layer.flipV = !layer.flipV;
+  layer.dirty = true;
+  renderLayerList();
+  scheduleRender();
 }
 
 /* ── Effect stack (of the active layer) ── */
@@ -821,14 +884,32 @@ function buildMaskAlpha(mask, w, h) {
 /* ── Compositing pipeline ── */
 async function renderLayerCanvas(layer) {
   if (layer.renderedCanvas && !layer.dirty) return layer.renderedCanvas;
-  const cw = Math.max(1, Math.round(layer.crop.w)), ch = Math.max(1, Math.round(layer.crop.h));
+  const cropW = Math.max(1, Math.round(layer.crop.w)), cropH = Math.max(1, Math.round(layer.crop.h));
+  const srcCanvas = document.createElement('canvas');
+  srcCanvas.width = cropW; srcCanvas.height = cropH;
+  const srcCx = srcCanvas.getContext('2d');
+  const natScale = layer.img.naturalWidth / layer.workW;
+  srcCx.drawImage(layer.img,
+    layer.crop.x * natScale, layer.crop.y * natScale, layer.crop.w * natScale, layer.crop.h * natScale,
+    0, 0, cropW, cropH);
+
+  const rotation = layer.rotation || 0;
+  const rotated = rotation === 90 || rotation === 270;
+  const cw = rotated ? cropH : cropW, ch = rotated ? cropW : cropH;
   const c = document.createElement('canvas');
   c.width = cw; c.height = ch;
   const cx = c.getContext('2d', { willReadFrequently: true });
-  const natScale = layer.img.naturalWidth / layer.workW;
-  cx.drawImage(layer.img,
-    layer.crop.x * natScale, layer.crop.y * natScale, layer.crop.w * natScale, layer.crop.h * natScale,
-    0, 0, cw, ch);
+  if (rotation || layer.flipH || layer.flipV) {
+    cx.save();
+    cx.translate(cw / 2, ch / 2);
+    cx.rotate(rotation * Math.PI / 180);
+    cx.scale(layer.flipH ? -1 : 1, layer.flipV ? -1 : 1);
+    cx.drawImage(srcCanvas, -cropW / 2, -cropH / 2);
+    cx.restore();
+  } else {
+    cx.drawImage(srcCanvas, 0, 0);
+  }
+
   let imgData = cx.getImageData(0, 0, cw, ch);
   for (const fx of layer.stack) {
     if (!fx.enabled) continue;
@@ -921,7 +1002,8 @@ function addImageLayer(file) {
       img, workW, workH, x, y, w, h,
       crop: { x: 0, y: 0, w: workW, h: workH },
       basePixelScale: w / workW, scalePct: 100,
-      blendMode: 'source-over', opacity: 100, visible: true, stack: [], dirty: true,
+      rotation: 0, flipH: false, flipV: false,
+      blendMode: 'source-over', opacity: 100, visible: true, collapsed: false, stack: [], dirty: true,
     };
     layers.push(layer);
     activeLayerId = layer.uid;
@@ -1300,15 +1382,33 @@ function scaleParams(def, params, factor) {
 }
 
 async function renderLayerAtScale(layer, factor) {
-  const w = Math.max(1, Math.round(layer.crop.w * factor));
-  const h = Math.max(1, Math.round(layer.crop.h * factor));
+  const cropW = Math.max(1, Math.round(layer.crop.w * factor));
+  const cropH = Math.max(1, Math.round(layer.crop.h * factor));
+  const srcCanvas = document.createElement('canvas');
+  srcCanvas.width = cropW; srcCanvas.height = cropH;
+  const srcCx = srcCanvas.getContext('2d');
+  const natScale = layer.img.naturalWidth / layer.workW;
+  srcCx.drawImage(layer.img,
+    layer.crop.x * natScale, layer.crop.y * natScale, layer.crop.w * natScale, layer.crop.h * natScale,
+    0, 0, cropW, cropH);
+
+  const rotation = layer.rotation || 0;
+  const rotated = rotation === 90 || rotation === 270;
+  const w = rotated ? cropH : cropW, h = rotated ? cropW : cropH;
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
   const cx = c.getContext('2d', { willReadFrequently: true });
-  const natScale = layer.img.naturalWidth / layer.workW;
-  cx.drawImage(layer.img,
-    layer.crop.x * natScale, layer.crop.y * natScale, layer.crop.w * natScale, layer.crop.h * natScale,
-    0, 0, w, h);
+  if (rotation || layer.flipH || layer.flipV) {
+    cx.save();
+    cx.translate(w / 2, h / 2);
+    cx.rotate(rotation * Math.PI / 180);
+    cx.scale(layer.flipH ? -1 : 1, layer.flipV ? -1 : 1);
+    cx.drawImage(srcCanvas, -cropW / 2, -cropH / 2);
+    cx.restore();
+  } else {
+    cx.drawImage(srcCanvas, 0, 0);
+  }
+
   let imgData = cx.getImageData(0, 0, w, h);
   for (const fx of layer.stack) {
     if (!fx.enabled) continue;

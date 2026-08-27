@@ -8,7 +8,7 @@ Projekt-spezifischer Kontext. Ergänzt `~/.claude/CLAUDE.md`.
 
 - **Name:** glitch
 - **Domain:** glitch.bensn.me
-- **Version:** v2.4.0
+- **Version:** v2.5.0
 - **Status:** active
 - **Stack:** Vanilla JS + Canvas API (Foto-Modus, clientseitig, kein Backend) + Flask/ffmpeg-Backend (Video-Modus, Port 5007)
 
@@ -69,6 +69,8 @@ ssh bensn systemctl restart glitch-video-api
 
 Kein `systemctl restart` für Frontend-Änderungen nötig (statisch, direkt live nach Upload).
 
+**Cache-Busting:** `index.html`/`video.html` referenzieren `css/style.css`, `js/*.js` mit `?v=X.X.X` (aktuelle Version). Nginx setzt keine expliziten Cache-Control-Header für statische Files, Browser cachen `<script src>`/`<link>` aber trotzdem oft aggressiv über einfache Reloads hinweg — bei jedem Deploy mit JS/CSS-Änderungen die Versionsnummer in *beiden* HTML-Dateien mitziehen, sonst laufen User (und man selbst beim Testen) auf einem inkonsistenten Mix aus altem/neuem Code (führt zu kryptischen Fehlern wie „X is not a function", weil ein altes `EFFECT_DEFS` auf eine in der alten `effects.js` noch nicht existierende Funktion zeigt).
+
 ---
 
 ## Git
@@ -96,7 +98,7 @@ git push origin main
 - Effekte mit Zufallskomponente (Dithering "Random", Noise, Block Glitch) haben einen 🎲-Button zum Neu-Würfeln (fester Seed für Reproduzierbarkeit bis zum Reroll)
 
 **Effekte (Bilder):**
-Grundkorrektur (Helligkeit/Kontrast/Sättigung), Gradationskurve, Farbüberlagerung, Verlaufsüberlagerung, Pixelation (mit Displacement), Pixel Sort, Dithering (Floyd–Steinberg / Atkinson / Bayer / Random), RGB Shift, Scanlines, Noise, Block Glitch, Posterize, Wave Distortion, JPEG Crunch, Invert
+Grundkorrektur (Helligkeit/Kontrast/Sättigung), Gradationskurve, Farbüberlagerung, Verlaufsüberlagerung, Pixelation (mit Displacement), Pixel Sort, Pixel Drag (Richtungs-Schmier-Effekt mit Farbversatz, für "Drip"/Melt-Optik), Dithering (Floyd–Steinberg / Atkinson / Bayer / Random), RGB Shift, Scanlines, Noise, Block Glitch, Posterize, Wave Distortion, JPEG Crunch, Invert
 
 Farbüberlagerung und Verlaufsüberlagerung teilen sich die Blend-Modi-Logik (`blendChannels()` in effects.js: normal/multiply/screen/overlay/color) — neue Blend-Modi dort zentral ergänzen. Das ist eine andere, kleinere Blend-Palette als die Ebenen-Kompositierung unten (Canvas-native Modi) — nicht verwechseln.
 
@@ -104,7 +106,7 @@ Farbüberlagerung und Verlaufsüberlagerung teilen sich die Blend-Modi-Logik (`b
 
 ## Foto-Modus: Ebenen (Layers)
 
-**Datenmodell:** `layers[]` (unten→oben), jede Ebene: `{ img, workW/workH (Arbeitsauflösung, ≤1600px), x/y/w/h (Platzierung in Canvas-Pixeln), crop (siehe unten), basePixelScale/scalePct (Größen-Regler-Referenz), blendMode, opacity, visible, stack (eigener Effekt-Stack), dirty, renderedCanvas (Cache) }`. Der gemeinsame Canvas (`canvasW/canvasH`) ist entweder die (herunterskalierte) Auflösung des ersten hochgeladenen Bildes oder aus "Neue Leinwand" (freie Breite/Höhe + Hintergrund als Farbwähler oder transparent).
+**Datenmodell:** `layers[]` (unten→oben), jede Ebene: `{ img, workW/workH (Arbeitsauflösung, ≤1600px), x/y/w/h (Platzierung in Canvas-Pixeln), crop (siehe unten), basePixelScale/scalePct (Größen-Regler-Referenz), rotation (0/90/180/270), flipH/flipV, blendMode, opacity, visible, collapsed (UI-Zustand der Karte), stack (eigener Effekt-Stack), dirty, renderedCanvas (Cache) }`. Der gemeinsame Canvas (`canvasW/canvasH`) ist entweder die (herunterskalierte) Auflösung des ersten hochgeladenen Bildes oder aus "Neue Leinwand" (freie Breite/Höhe + Hintergrund als Farbwähler oder transparent).
 
 **Rendering (`renderComposite()` in app.js):** pro sichtbarer Ebene bottom-to-top wird `renderLayerCanvas()` aufgerufen (rendert nur den *eigenen*, ggf. zugeschnittenen Effekt-Stack der Ebene auf einen Offscreen-Canvas — **cached** über `layer.dirty`, wird nur bei Änderungen am Effekt-Stack/Crop dieser Ebene neu berechnet, nicht bei Verschieben/Resize/Deckkraft/Blend-Modus-Änderung anderer Ebenen), dann per `ctx.drawImage(..., x, y, w, h)` mit `ctx.globalAlpha` + `ctx.globalCompositeOperation` auf den Haupt-Canvas kompositiert. Danach: `drawCropHandles()` / `drawMaskOverlay()` / `drawCanvasCropOverlay()` — zeichnen nur etwas, wenn der jeweilige Modus aktiv ist.
 
@@ -114,6 +116,8 @@ Farbüberlagerung und Verlaufsüberlagerung teilen sich die Blend-Modi-Logik (`b
 - Ebenen-Panel: Reorder per ↑/↓ oder Drag&Drop (⠿-Handle), Sichtbarkeit toggeln, Blend-Modus + Deckkraft + Größe (%) pro Ebene, Klick auf eine Karte macht sie zur `activeLayerId` — deren Effekt-Stack wird unten angezeigt/editiert
 - Verschieben: Drag direkt auf dem Haupt-Canvas (nur innerhalb der Bounds der *aktiven* Ebene startet der Drag, `startLayerDrag`/`moveLayerDrag`)
 - Größe: Prozent-Slider (`resizeLayer()`) skaliert `basePixelScale` (die ursprüngliche "fit to canvas"-Dichte) — `applyLayerTransform()` berechnet daraus `w/h` aus `crop.w/crop.h`, zentriert um den Mittelpunkt
+- **Drehen & Spiegeln:** ↺/↻ (90°-Schritte) + ⬌/⬍ pro Ebene (`rotateLayer()`/`toggleFlip()`) — bewusst ein Ebenen-Attribut, kein Effekt-Stack-Eintrag: eine 90°/270°-Drehung vertauscht Breite/Höhe, was mit dem Effekt-Stack-Modell (feste Dimensionen pro Durchlauf, mehrfach hinzufügbar) nicht sauber vereinbar wäre. Wird in `renderLayerCanvas()`/`renderLayerAtScale()` *vor* dem Crop-Ausschnitt und *vor* dem Effekt-Stack angewendet (Canvas-`rotate()`/`scale()`-Transform, kein manuelles Pixel-Remapping), danach laufen Crop-Auswahl, Masken-Koordinaten und Effekte alle im bereits gedrehten Koordinatensystem — kein Sonderfall nötig
+- **Ebenen-/Effekt-Panel sind unabhängig scrollbar** (`max-height: 34vh` je Liste) und die Sidebar ist `position: sticky`, damit der Canvas beim Scrollen durch viele Ebenen/Effekte sichtbar bleibt. Jede Ebenen-Karte ist einklappbar (`layer.collapsed`, Chevron-Button) — neu aktivierte Ebenen klappen automatisch auf, alle anderen bleiben wie eingestellt (kein automatisches Zuklappen anderer Ebenen, um keine manuell offen gelassene Referenz-Ebene zu verstecken)
 
 **Crop (pro Ebene, `cropModeLayerId`):** "Zuschneiden"-Button pro Ebene aktiviert 4 Kanten-Handles (Mittelpunkte oben/unten/links/rechts) direkt auf den aktuell sichtbaren Ebenen-Bounds. Ziehen trimmt `layer.crop {x,y,w,h}` (in Arbeitsauflösungs-Pixeln der Ebene) von der jeweiligen Kante — der Rest des Bilds bleibt in derselben Pixeldichte erhalten (kein Reskalieren). Modell: `fullX/fullY` (Position der *ungeschnittenen* Ebene, bleibt während des Drags konstant) + `crop.x/y` bestimmen `layer.x/y = fullX + crop.x*scale`. "Crop zurücksetzen" stellt `crop = {0,0,workW,workH}` wieder her.
 
@@ -194,6 +198,7 @@ ffmpeg wurde für dieses Projekt via `apt install ffmpeg` auf dem Server install
 | v2.2.0 | Foto: Drag&Drop-Reordering, Export in voller Auflösung; Video: Grundkorrektur, Export in 720p/1080p | ✅ done |
 | v2.3.0 | Foto: Ebenen-System — mehrere Bilder überlagern, 16 native Blend-Modi, Deckkraft, Größe, Drag-to-Move, "Neue Leinwand" für Collagen | ✅ done |
 | v2.4.0 | Foto: Crop pro Ebene/Komposition, Masken-Funktion (Kreis/Rechteck, Effekte nur in ausgewähltem Bereich anwenden), Leinwand-Hintergrund per Farbwähler | ✅ done |
+| v2.5.0 | Foto: Ebenen-/Effekt-Panel scrollbar + einklappbar, Drehen/Spiegeln pro Ebene, neuer Pixel-Drag-Effekt; Cache-Busting für JS/CSS | ✅ done |
 
 ---
 

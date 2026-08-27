@@ -177,6 +177,15 @@
 /* ── Sidebar ── */
 .sidebar {
   min-width: 0;
+  position: sticky;
+  top: 1rem;
+  max-height: calc(100vh - 2rem);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+@media (max-width: 860px) {
+  .sidebar { position: static; max-height: none; }
 }
 .sidebar-header {
   font-family: 'DM Mono', monospace;
@@ -307,6 +316,10 @@ select:hover { border-color: var(--border-hover); }
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+  max-height: 34vh;
 }
 .stack-empty {
   font-family: 'DM Mono', monospace;
@@ -327,6 +340,19 @@ select:hover { border-color: var(--border-hover); }
   flex-direction: column;
   gap: 0.5rem;
   margin-bottom: 0.5rem;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+  max-height: 34vh;
+  flex-shrink: 0;
+}
+
+/* thin dark scrollbars for the scrollable panels */
+.layer-list::-webkit-scrollbar, .effect-stack::-webkit-scrollbar { width: 6px; }
+.layer-list::-webkit-scrollbar-track, .effect-stack::-webkit-scrollbar-track { background: transparent; }
+.layer-list::-webkit-scrollbar-thumb, .effect-stack::-webkit-scrollbar-thumb {
+  background: var(--border-hover);
+  border-radius: 3px;
 }
 .layer-card {
   background: var(--surface);
@@ -386,6 +412,7 @@ select:hover { border-color: var(--border-hover); }
   color: var(--accent-blue);
 }
 .icon-btn.mask-active { color: #facc15; }
+.icon-btn.toggled { color: var(--accent-blue); background: rgba(0,166,251,0.12); }
 
 .mask-panel {
   margin-top: 0.6rem;
