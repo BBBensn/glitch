@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;500;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://bensn.me/shared/bensn.css">
-<link rel="stylesheet" href="css/style.css?v=2.7.0">
+<link rel="stylesheet" href="css/style.css?v=2.8.0">
 </head>
 <body>
 
@@ -40,6 +40,7 @@
     <div class="editor-main" id="editorArea">
       <div class="toolbar">
         <button class="btn" id="addVideoBtn">+ Video hinzufügen</button>
+        <button class="btn" id="canvasBtn">Leinwand</button>
         <div class="toolbar-spacer"></div>
         <span class="dim-text" id="dimText"></span>
       </div>
@@ -50,22 +51,22 @@
           <path d="M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
         <div class="upload-title">Videos hierher ziehen oder klicken</div>
-        <div class="upload-sub">Mehrfachauswahl möglich — max. 20s pro Clip werden verwendet, wird auf 480px skaliert</div>
+        <div class="upload-sub">Mehrfachauswahl möglich — max. 20s pro Clip werden verwendet</div>
       </div>
 
-      <div class="clip-list" id="clipList"></div>
+      <div class="clip-strip" id="clipStrip"></div>
+      <div class="clip-detail" id="clipDetail"></div>
 
       <video id="preview" class="video-preview" controls playsinline></video>
     </div>
 
     <div class="sidebar">
       <div class="sidebar-header-row">
-        <div class="sidebar-header">Datamosh-Parameter (an jedem Clip-Übergang)</div>
+        <div class="sidebar-header">Video Studio</div>
         <button class="info-btn" id="infoBtn" title="Wie funktioniert Datamoshing?">?</button>
       </div>
-      <div class="effect-stack" id="controls"></div>
       <button class="btn clean-btn" id="cleanBtn" disabled>Ohne Moshing ansehen</button>
-      <button class="btn btn-primary render-btn" id="renderBtn" disabled>Vorschau rendern</button>
+      <button class="btn btn-primary render-btn" id="renderBtn" disabled>Jetzt aktualisieren</button>
       <button class="btn download-btn" id="downloadBtn" disabled>Download MP4</button>
 
       <div class="export-row">
@@ -107,21 +108,53 @@
         <dd>Ab dieser Position werden alle I-Frames <em>dieses Clips</em> entfernt. Das ist der eigentliche Schalter für den Effekt — bleibt er am Standardwert stehen (Ende bei Clip 1, Anfang bei späteren Clips), passiert dort nichts Zusätzliches.</dd>
         <dt>In/Out (orange)</dt>
         <dd>Schneidet den Clip vorne/hinten zu, unabhängig vom Moshing.</dd>
-        <dt>Wiederhol-Fenster + Wiederholungen</dt>
-        <dd>Kurz bevor ein Clip zum nächsten wechselt, werden die letzten paar Frames (Fenster, in Frames) mehrfach wiederholt (Wiederholungen, Anzahl). Das erzeugt einen kurzen Stotter-/Freeze-Effekt direkt am Übergang, bevor der Melt einsetzt — verstärkt das Ziehen/Draggen.</dd>
-        <dt>Byte-Rauschen</dt>
-        <dd>Zufällige Bytes in den P-Frames nach dem Cut-Point werden verändert. Sorgt für zusätzliches visuelles Rauschen/Chaos in den bereits gemoshten Bereichen — je höher, desto kaputter. Bei sehr hohen Werten kann das Rendern fehlschlagen (Fehlermeldung, einfach Intensität reduzieren).</dd>
+        <dt>Wiederhol-Fenster + Wiederholungen (pro Clip)</dt>
+        <dd>Kurz bevor dieser Clip zum nächsten wechselt, werden seine letzten paar Frames (Fenster, in Frames) mehrfach wiederholt (Wiederholungen, Anzahl). Das erzeugt einen kurzen Stotter-/Freeze-Effekt direkt am Übergang, bevor der Melt einsetzt — verstärkt das Ziehen/Draggen.</dd>
+        <dt>Byte-Rauschen (pro Clip)</dt>
+        <dd>Zufällige Bytes in den P-Frames dieses Clips nach dem Cut-Point werden verändert. Sorgt für zusätzliches visuelles Rauschen/Chaos in den bereits gemoshten Bereichen — je höher, desto kaputter. Bei sehr hohen Werten kann das Rendern fehlschlagen (Fehlermeldung, einfach Intensität reduzieren).</dd>
       </dl>
 
-      <p class="modal-tldr">Kurz gesagt: kein verschobener Cut-Point = kein Effekt. Zwei sehr unterschiedliche Clips mit dem Cut-Point von Clip 2 am Anfang = maximaler Morph.</p>
+      <h3>Leinwand & Zuschnitt</h3>
+      <p>Über den "Leinwand"-Button lässt sich eine feste Ziel-Auflösung/-Seitenverhältnis festlegen (z.B. Hochformat für Instagram) — jeder Clip wird dann automatisch eingepasst: <strong>Füllen</strong> skaliert hoch und schneidet den Überschuss ab (Versatz-Regler verschieben, welcher Ausschnitt erhalten bleibt), <strong>Einpassen</strong> skaliert runter und füllt den Rand mit der gewählten Hintergrundfarbe, <strong>Strecken</strong> ignoriert das Seitenverhältnis bewusst für einen zusätzlichen Verzerrungs-Look. Ohne explizite Leinwand legt der erste hochgeladene Clip sie automatisch anhand seines eigenen Seitenverhältnisses fest.</p>
 
+      <p class="modal-tldr">Kurz gesagt: kein verschobener Cut-Point = kein Effekt. Zwei sehr unterschiedliche Clips mit dem Cut-Point von Clip 2 am Anfang = maximaler Morph. Änderungen rendern automatisch neu (kurze Verzögerung) — "Jetzt aktualisieren" erzwingt es sofort.</p>
+
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="canvasModal">
+  <div class="modal modal-small">
+    <div class="modal-header">
+      <h2>Leinwand</h2>
+      <button class="icon-btn" id="closeCanvasModalBtn" title="Schließen">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="inline-btn-row">
+        <button class="btn btn-ghost small-btn" id="presetPortraitBtn">9:16 Hochformat</button>
+        <button class="btn btn-ghost small-btn" id="presetSquareBtn">1:1 Quadrat</button>
+        <button class="btn btn-ghost small-btn" id="presetLandscapeBtn">16:9 Querformat</button>
+      </div>
+      <div class="param-row">
+        <div class="param-label-row"><span class="param-label">Breite (px)</span></div>
+        <input type="number" id="canvasWidthInput" class="num-input" min="16" max="1920" value="1080">
+      </div>
+      <div class="param-row">
+        <div class="param-label-row"><span class="param-label">Höhe (px)</span></div>
+        <input type="number" id="canvasHeightInput" class="num-input" min="16" max="1920" value="1920">
+      </div>
+      <div class="param-row">
+        <span class="param-label">Hintergrund (für "Einpassen")</span>
+        <input type="color" id="canvasBgColor" class="param-color" value="#000000">
+      </div>
+      <button class="btn btn-primary" id="applyCanvasBtn" style="width:100%; margin-top:0.5rem;">Übernehmen</button>
     </div>
   </div>
 </div>
 
 <input type="file" id="fileInput" accept="video/*" multiple hidden>
 
-<script src="js/datamosh.js?v=2.7.0"></script>
-<script src="js/video-app.js?v=2.7.0"></script>
+<script src="js/datamosh.js?v=2.8.0"></script>
+<script src="js/video-app.js?v=2.8.0"></script>
 </body>
 </html>

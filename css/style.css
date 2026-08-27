@@ -628,46 +628,71 @@ input[type="range"]::-moz-range-thumb {
   .glitch-mark { font-size: 1.5rem; }
 }
 
-/* ── Video mode: clip list ── */
-.clip-list {
+/* ── Video mode: clip strip (compact selector) + detail panel ── */
+.clip-strip {
   display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.5rem;
   margin-top: 1rem;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
 }
 
-.clip-card {
+.clip-strip-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.55rem 0.7rem;
+  cursor: pointer;
+  flex: 0 0 auto;
+  min-width: 130px;
+  transition: border-color 0.15s;
+}
+.clip-strip-item:hover { border-color: var(--border-hover); }
+.clip-strip-item.active { border-color: var(--accent-blue); }
+
+.clip-strip-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+.clip-strip-info {
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 0.15rem;
+}
+.clip-strip-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 0.3rem;
+}
+
+.clip-detail {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 0.85rem;
+  margin-top: 0.75rem;
 }
 
-.clip-header {
+.clip-detail-section {
+  margin-top: 0.85rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
+  flex-direction: column;
+  gap: 0.7rem;
 }
-.clip-title {
-  font-size: 0.85rem;
+.clip-detail-title {
+  font-size: 0.75rem;
   font-weight: 700;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.clip-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex-shrink: 0;
-}
-.clip-info {
-  font-family: 'DM Mono', monospace;
-  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
   color: var(--muted);
-  margin-right: 0.3rem;
 }
 
 .clip-status {
@@ -677,15 +702,6 @@ input[type="range"]::-moz-range-thumb {
   padding: 1rem 0 0.25rem;
 }
 .clip-status.error { color: var(--accent-red); }
-
-.clip-color-panel {
-  margin-top: 0.75rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: 0.7rem;
-}
 
 .timeline {
   width: 100%;

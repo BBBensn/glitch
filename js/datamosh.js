@@ -131,14 +131,20 @@ Datamosh.selectClipFrames = function (clip, isFirstClip) {
    marks which output-frame range (end exclusive) came from clips[i] —
    including its duplicated tail frames, since those still show that
    clip's own content. Lets the server grade each clip's own frame range
-   independently instead of the whole merged video uniformly. */
-Datamosh.mergeAndMosh = function (clips, opts) {
-  const rand = dmMulberry32(opts.seed || 1);
-  const prob = clamp(opts.noiseIntensity, 0, 100) / 100 * 0.15;
+   independently instead of the whole merged video uniformly.
+
+   Repeat-window/-count and byte-noise are per-clip (clip.dupWindow,
+   clip.dupCount, clip.noiseIntensity, clip.seed) rather than one shared
+   opts object — each clip's corruption is its own independently-seeded
+   RNG stream, reproducible in isolation regardless of what came before it
+   in the sequence. */
+Datamosh.mergeAndMosh = function (clips) {
   const allChunks = [];
   const segments = [];
 
   clips.forEach((clip, ci) => {
+    const rand = dmMulberry32(clip.seed || 1);
+    const prob = clamp(clip.noiseIntensity || 0, 0, 100) / 100 * 0.15;
     const isFirst = ci === 0;
     const idxList = Datamosh.selectClipFrames(clip, isFirst);
     const segStart = allChunks.length;
@@ -154,9 +160,9 @@ Datamosh.mergeAndMosh = function (clips, opts) {
     });
     allChunks.push(...clipChunks);
 
-    if (ci < clips.length - 1 && opts.dupCount > 0 && opts.dupWindow > 0) {
-      const tail = clipChunks.slice(-opts.dupWindow);
-      for (let r = 0; r < opts.dupCount; r++) allChunks.push(...tail);
+    if (ci < clips.length - 1 && clip.dupCount > 0 && clip.dupWindow > 0) {
+      const tail = clipChunks.slice(-clip.dupWindow);
+      for (let r = 0; r < clip.dupCount; r++) allChunks.push(...tail);
     }
 
     segments.push({ clipIndex: ci, start: segStart, end: allChunks.length });
