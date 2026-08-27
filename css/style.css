@@ -671,7 +671,7 @@ input[type="range"]::-moz-range-thumb {
   margin-top: 0.3rem;
 }
 
-.clip-detail {
+.clip-timeline-wrap {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -679,13 +679,47 @@ input[type="range"]::-moz-range-thumb {
   margin-top: 0.75rem;
 }
 
+/* Scrollable stack of collapsible settings cards in the sidebar — same
+   pattern as .layer-list/.effect-stack in the photo mode: the sidebar
+   itself is position:sticky + height-capped, this list fills the
+   remaining space and scrolls internally so the preview/buttons above it
+   stay in view. */
+.clip-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-top: 0.5rem;
+}
+.clip-detail::-webkit-scrollbar { width: 6px; }
+.clip-detail::-webkit-scrollbar-track { background: transparent; }
+.clip-detail::-webkit-scrollbar-thumb { background: var(--border-hover); border-radius: 3px; }
+
 .clip-detail-section {
-  margin-top: 0.85rem;
-  padding-top: 0.85rem;
-  border-top: 1px solid var(--border);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.7rem 0.85rem;
+  flex-shrink: 0;
+}
+.clip-detail-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+.clip-detail-section-body {
   display: flex;
   flex-direction: column;
   gap: 0.7rem;
+  margin-top: 0.7rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--border);
 }
 .clip-detail-title {
   font-size: 0.75rem;

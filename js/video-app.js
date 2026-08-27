@@ -5,12 +5,16 @@
    later clips it makes them inherit the previous clip's stale reference
    from the moment they start (the classic two-video morph).
 
-   Clips are edited one at a time: a compact strip lists every clip, click
-   selects it and its full controls (trim/cut-point, canvas fit, color,
-   datamosh params, glitch filters) render into a single detail panel below
-   — mirrors the photo mode's "layer list + one active layer's controls"
-   pattern. Edits auto-render (debounced) instead of requiring an explicit
-   button click; a manual "Jetzt aktualisieren" button forces it immediately. */
+   Layout: preview on top, a compact clip-selector strip below it, then the
+   active clip's frame-accurate timeline. The active clip's other controls
+   (canvas fit, color, datamosh params, glitch filters) render as a
+   scrollable stack of collapsible cards in the sidebar, below the render
+   buttons — mirrors the photo mode's "layer list + one active layer's
+   controls" pattern, but keeps the buttons pinned above the scroll area so
+   the preview and render controls never scroll out of view.
+
+   Rendering is manual-only (no auto-render): "Jetzt aktualisieren" re-
+   prepares any clip whose canvas/fit setting changed, then re-renders. */
 
 const API_BASE = '/api/glitch';
 const PROXY_LONG_EDGE = 640; // working/editing resolution cap once a canvas is set — export re-prepares at full quality
@@ -19,6 +23,7 @@ const fileInput = document.getElementById('fileInput');
 const uploadZone = document.getElementById('uploadZone');
 const addVideoBtn = document.getElementById('addVideoBtn');
 const clipStripEl = document.getElementById('clipStrip');
+const clipTimelineWrapEl = document.getElementById('clipTimelineWrap');
 const clipDetailEl = document.getElementById('clipDetail');
 const preview = document.getElementById('preview');
 const cleanBtn = document.getElementById('cleanBtn');
@@ -33,8 +38,11 @@ let uidCounter = 1;
 let renderedBlob = null;
 let activeClipId = null;
 let activeClipDrag = null; // { clip, target: 'in'|'out'|'cut', canvas, isFirst }
-let renderGeneration = 0;
-let autoRenderTimer = null;
+
+/* Which of the collapsible settings cards are open — shared across clips
+   (not per-clip) since only one clip's panel is visible at a time and a
+   "I never touch Datamosh" preference should stick when switching clips. */
+const sectionOpen = { fit: true, color: true, mosh: true, glitch: true };
 
 /* 0 = not yet established — the first clip's own aspect ratio (read back
    from the server via X-Video-Width/Height headers) seeds this, exactly
@@ -138,6 +146,7 @@ function runPrepareForClip(clip, isFirstOverall) {
     .catch(err => { clip.error = err.message; })
     .finally(() => {
       renderClipStrip();
+      renderClipTimelineSection();
       renderClipDetail();
       updateButtons();
     });
@@ -160,12 +169,13 @@ function addFiles(fileList) {
   const wasFirstBatch = clips.length === 0;
   const newClips = files.map(f => createClip(f));
   renderClipStrip();
+  renderClipTimelineSection();
   renderClipDetail();
   updateButtons();
 
   newClips.forEach((clip, i) => {
     const isFirstOverall = wasFirstBatch && i === 0;
-    uploadChain = uploadChain.then(() => runPrepareForClip(clip, isFirstOverall)).then(scheduleAutoRender);
+    uploadChain = uploadChain.then(() => runPrepareForClip(clip, isFirstOverall));
   });
 }
 
@@ -190,13 +200,20 @@ function updateButtons() {
   dimText.textContent = validCount > 0 ? `${validCount} Clip${validCount > 1 ? 's' : ''}` : '';
 }
 
+function selectClip(uid) {
+  activeClipId = uid;
+  renderClipStrip();
+  renderClipTimelineSection();
+  renderClipDetail();
+}
+
 /* ── Clip strip (compact selector) ── */
 function renderClipStrip() {
   clipStripEl.innerHTML = '';
   clips.forEach((clip, index) => {
     const item = document.createElement('div');
     item.className = 'clip-strip-item' + (clip.uid === activeClipId ? ' active' : '');
-    item.addEventListener('click', () => { activeClipId = clip.uid; renderClipStrip(); renderClipDetail(); });
+    item.addEventListener('click', () => selectClip(clip.uid));
 
     const title = document.createElement('div');
     title.className = 'clip-strip-title';
@@ -217,7 +234,7 @@ function renderClipStrip() {
     up.addEventListener('click', e => {
       e.stopPropagation();
       [clips[index - 1], clips[index]] = [clips[index], clips[index - 1]];
-      renderClipStrip(); renderClipDetail(); scheduleAutoRender();
+      renderClipStrip(); renderClipTimelineSection();
     });
     actions.appendChild(up);
     const down = document.createElement('button');
@@ -225,7 +242,7 @@ function renderClipStrip() {
     down.addEventListener('click', e => {
       e.stopPropagation();
       [clips[index + 1], clips[index]] = [clips[index], clips[index + 1]];
-      renderClipStrip(); renderClipDetail(); scheduleAutoRender();
+      renderClipStrip(); renderClipTimelineSection();
     });
     actions.appendChild(down);
     const remove = document.createElement('button');
@@ -234,7 +251,7 @@ function renderClipStrip() {
       e.stopPropagation();
       clips = clips.filter(c => c.uid !== clip.uid);
       if (activeClipId === clip.uid) activeClipId = clips.length ? clips[0].uid : null;
-      renderClipStrip(); renderClipDetail(); updateButtons(); scheduleAutoRender();
+      renderClipStrip(); renderClipTimelineSection(); renderClipDetail(); updateButtons();
     });
     actions.appendChild(remove);
     item.appendChild(actions);
@@ -243,7 +260,7 @@ function renderClipStrip() {
   });
 }
 
-/* ── Clip detail panel (the currently active clip's full controls) ── */
+/* ── Shared controls ── */
 function buildSlider(label, min, max, step, value, onInput) {
   const row = document.createElement('div');
   row.className = 'param-row';
@@ -271,42 +288,67 @@ function buildGlitchRow(label, sublabel, fx, key, min, max, step) {
   const checkbox = document.createElement('input');
   checkbox.type = 'checkbox';
   checkbox.checked = fx.enabled;
-  checkbox.addEventListener('change', () => { fx.enabled = checkbox.checked; scheduleAutoRender(); });
+  checkbox.addEventListener('change', () => { fx.enabled = checkbox.checked; });
   checkboxLabel.append(checkbox, document.createTextNode(label));
   wrap.appendChild(checkboxLabel);
-  wrap.appendChild(buildSlider(sublabel, min, max, step, fx[key], v => { fx[key] = v; scheduleAutoRender(); }));
+  wrap.appendChild(buildSlider(sublabel, min, max, step, fx[key], v => { fx[key] = v; }));
   return wrap;
 }
 
-function addSectionTitle(container, text) {
-  const title = document.createElement('div');
-  title.className = 'clip-detail-title';
-  title.textContent = text;
-  container.appendChild(title);
+/* One collapsible card in the sidebar's settings stack — open/closed state
+   is shared across clips (sectionOpen), keyed by a short id. */
+function buildCollapsibleSection(key, title, buildBody) {
+  const section = document.createElement('div');
+  section.className = 'clip-detail-section';
+
+  const header = document.createElement('div');
+  header.className = 'clip-detail-section-header';
+  header.addEventListener('click', () => { sectionOpen[key] = !sectionOpen[key]; renderClipDetail(); });
+  const titleEl = document.createElement('span');
+  titleEl.className = 'clip-detail-title';
+  titleEl.textContent = title;
+  header.appendChild(titleEl);
+  const chevron = document.createElement('button');
+  chevron.className = 'icon-btn';
+  chevron.title = sectionOpen[key] ? 'Einklappen' : 'Aufklappen';
+  chevron.textContent = sectionOpen[key] ? '▾' : '▸';
+  chevron.addEventListener('click', e => { e.stopPropagation(); sectionOpen[key] = !sectionOpen[key]; renderClipDetail(); });
+  header.appendChild(chevron);
+  section.appendChild(header);
+
+  if (sectionOpen[key]) {
+    const body = document.createElement('div');
+    body.className = 'clip-detail-section-body';
+    buildBody(body);
+    section.appendChild(body);
+  }
+  return section;
 }
 
-function renderClipDetail() {
-  clipDetailEl.innerHTML = '';
+/* ── Timeline section (main column): frame-accurate in/out/cut-point drag
+   for whichever clip is currently active. ── */
+function renderClipTimelineSection() {
+  clipTimelineWrapEl.innerHTML = '';
   const clip = clips.find(c => c.uid === activeClipId);
   if (!clip) {
     const empty = document.createElement('div');
     empty.className = 'stack-empty';
     empty.textContent = 'Kein Clip ausgewählt.';
-    clipDetailEl.appendChild(empty);
+    clipTimelineWrapEl.appendChild(empty);
     return;
   }
   if (clip.error) {
     const status = document.createElement('div');
     status.className = 'clip-status error';
     status.textContent = `Fehler: ${clip.error}`;
-    clipDetailEl.appendChild(status);
+    clipTimelineWrapEl.appendChild(status);
     return;
   }
   if (!clip.parsed) {
     const status = document.createElement('div');
     status.className = 'clip-status';
     status.textContent = 'Wird vorbereitet…';
-    clipDetailEl.appendChild(status);
+    clipTimelineWrapEl.appendChild(status);
     return;
   }
 
@@ -314,112 +356,107 @@ function renderClipDetail() {
 
   const timelineCanvas = document.createElement('canvas');
   timelineCanvas.className = 'timeline clip-timeline';
-  clipDetailEl.appendChild(timelineCanvas);
+  clipTimelineWrapEl.appendChild(timelineCanvas);
   const legend = document.createElement('div');
   legend.className = 'timeline-legend';
   legend.innerHTML = '<span><i class="legend-dot legend-i"></i> I-Frame</span>' +
     '<span><i class="legend-dot legend-p"></i> P-Frame</span>' +
     '<span><i class="legend-dot legend-drop"></i> wird entfernt</span>' +
     '<span><i class="legend-dot legend-trim"></i> In/Out</span>';
-  clipDetailEl.appendChild(legend);
+  clipTimelineWrapEl.appendChild(legend);
   clip.canvas = timelineCanvas;
   wireClipTimeline(clip, isFirst);
 
-  /* Zuschnitt */
-  const fitSection = document.createElement('div');
-  fitSection.className = 'clip-detail-section';
-  addSectionTitle(fitSection, 'Zuschnitt');
-  const fitSelect = document.createElement('select');
-  for (const [val, text] of [['cover', 'Füllen (Cover)'], ['contain', 'Einpassen (Contain)'], ['stretch', 'Strecken']]) {
-    const opt = document.createElement('option');
-    opt.value = val; opt.textContent = text;
-    if (val === clip.fit.mode) opt.selected = true;
-    fitSelect.appendChild(opt);
-  }
-  fitSelect.addEventListener('change', () => {
-    clip.fit.mode = fitSelect.value;
-    clip.needsReprepare = true;
-    renderClipDetail();
-    scheduleAutoRender();
-  });
-  fitSection.appendChild(fitSelect);
-  if (clip.fit.mode === 'cover') {
-    fitSection.appendChild(buildSlider('Versatz X', -100, 100, 1, Math.round(clip.fit.panX * 100), v => {
-      clip.fit.panX = v / 100; clip.needsReprepare = true; scheduleAutoRender();
-    }));
-    fitSection.appendChild(buildSlider('Versatz Y', -100, 100, 1, Math.round(clip.fit.panY * 100), v => {
-      clip.fit.panY = v / 100; clip.needsReprepare = true; scheduleAutoRender();
-    }));
-  }
-  clipDetailEl.appendChild(fitSection);
-
-  /* Farbe */
-  const colorSection = document.createElement('div');
-  colorSection.className = 'clip-detail-section';
-  addSectionTitle(colorSection, 'Farbe');
-  colorSection.appendChild(buildSlider('Helligkeit', -100, 100, 1, clip.brightness, v => { clip.brightness = v; scheduleAutoRender(); }));
-  colorSection.appendChild(buildSlider('Kontrast', -100, 100, 1, clip.contrast, v => { clip.contrast = v; scheduleAutoRender(); }));
-  colorSection.appendChild(buildSlider('Sättigung', -100, 100, 1, clip.saturation, v => { clip.saturation = v; scheduleAutoRender(); }));
-  colorSection.appendChild(buildSlider('Farbton', -180, 180, 1, clip.hue, v => { clip.hue = v; scheduleAutoRender(); }));
-
-  const invertRow = document.createElement('label');
-  invertRow.className = 'param-checkbox';
-  const invertInput = document.createElement('input');
-  invertInput.type = 'checkbox';
-  invertInput.checked = clip.invert;
-  invertInput.addEventListener('change', () => { clip.invert = invertInput.checked; scheduleAutoRender(); });
-  invertRow.append(invertInput, document.createTextNode('Invertieren'));
-  colorSection.appendChild(invertRow);
-
-  const bwRow = document.createElement('label');
-  bwRow.className = 'param-checkbox';
-  const bwInput = document.createElement('input');
-  bwInput.type = 'checkbox';
-  bwInput.checked = clip.bw;
-  bwInput.addEventListener('change', () => { clip.bw = bwInput.checked; scheduleAutoRender(); });
-  bwRow.append(bwInput, document.createTextNode('Schwarz/Weiß'));
-  colorSection.appendChild(bwRow);
-
-  const applyAllColorBtn = document.createElement('button');
-  applyAllColorBtn.className = 'btn small-btn';
-  applyAllColorBtn.textContent = 'Farbe auf alle Clips anwenden';
-  applyAllColorBtn.addEventListener('click', () => {
-    const { brightness, contrast, saturation, hue, invert, bw } = clip;
-    clips.forEach(c => { if (c !== clip) Object.assign(c, { brightness, contrast, saturation, hue, invert, bw }); });
-    scheduleAutoRender();
-  });
-  colorSection.appendChild(applyAllColorBtn);
-  clipDetailEl.appendChild(colorSection);
-
-  /* Datamosh */
-  const moshSection = document.createElement('div');
-  moshSection.className = 'clip-detail-section';
-  addSectionTitle(moshSection, 'Datamosh');
-  moshSection.appendChild(buildSlider('Wiederhol-Fenster (Frames)', 0, 30, 1, clip.dupWindow, v => { clip.dupWindow = v; scheduleAutoRender(); }));
-  moshSection.appendChild(buildSlider('Wiederholungen', 0, 20, 1, clip.dupCount, v => { clip.dupCount = v; scheduleAutoRender(); }));
-  const noiseRow = buildSlider('Byte-Rauschen', 0, 100, 1, clip.noiseIntensity, v => { clip.noiseIntensity = v; scheduleAutoRender(); });
-  const moshDice = document.createElement('button');
-  moshDice.className = 'icon-btn'; moshDice.title = 'Neu würfeln'; moshDice.textContent = '🎲';
-  moshDice.style.marginTop = '0.3rem';
-  moshDice.addEventListener('click', () => { clip.seed = Math.floor(Math.random() * 1e9); scheduleAutoRender(); });
-  noiseRow.appendChild(moshDice);
-  moshSection.appendChild(noiseRow);
-  clipDetailEl.appendChild(moshSection);
-
-  /* Glitch-Filter */
-  const glitchSection = document.createElement('div');
-  glitchSection.className = 'clip-detail-section';
-  addSectionTitle(glitchSection, 'Glitch-Filter');
-  glitchSection.appendChild(buildGlitchRow('RGB-Shift', 'Betrag', clip.rgbShift, 'amount', 0, 20, 1));
-  glitchSection.appendChild(buildGlitchRow('Noise', 'Stärke', clip.noise, 'strength', 0, 100, 1));
-  glitchSection.appendChild(buildGlitchRow('Pixelate', 'Blockgröße', clip.pixelate, 'blockSize', 2, 40, 1));
-  glitchSection.appendChild(buildGlitchRow('Scanlines', 'Intensität', clip.scanlines, 'intensity', 0, 100, 1));
-  clipDetailEl.appendChild(glitchSection);
-
   const hint = document.createElement('div');
   hint.className = 'timeline-hint';
-  hint.textContent = 'Cut-Point (rote Linie) und In/Out (orange) direkt auf der Timeline ziehen. Ab dem Cut-Point werden I-Frames dieses Clips entfernt — beim ersten Clip für einen internen Melt, bei späteren Clips für den Morph-Übergang vom vorigen Clip.';
-  clipDetailEl.appendChild(hint);
+  hint.textContent = 'Cut-Point (rote Linie) und In/Out (orange) direkt auf der Timeline ziehen. Ab dem Cut-Point werden I-Frames dieses Clips entfernt — beim ersten Clip für einen internen Melt, bei späteren Clips für den Morph-Übergang vom vorigen Clip. Änderungen erst nach Klick auf "Jetzt aktualisieren" sichtbar.';
+  clipTimelineWrapEl.appendChild(hint);
+}
+
+/* ── Detail panel (sidebar): the active clip's other settings, as a
+   scrollable stack of collapsible cards. ── */
+function renderClipDetail() {
+  clipDetailEl.innerHTML = '';
+  const clip = clips.find(c => c.uid === activeClipId);
+  if (!clip || clip.error || !clip.parsed) return; // status already shown in the timeline section above
+
+  clipDetailEl.appendChild(buildCollapsibleSection('fit', 'Zuschnitt', body => {
+    const fitSelect = document.createElement('select');
+    for (const [val, text] of [['cover', 'Füllen (Cover)'], ['contain', 'Einpassen (Contain)'], ['stretch', 'Strecken']]) {
+      const opt = document.createElement('option');
+      opt.value = val; opt.textContent = text;
+      if (val === clip.fit.mode) opt.selected = true;
+      fitSelect.appendChild(opt);
+    }
+    fitSelect.addEventListener('click', e => e.stopPropagation());
+    fitSelect.addEventListener('change', () => {
+      clip.fit.mode = fitSelect.value;
+      clip.needsReprepare = true;
+      renderClipDetail();
+    });
+    body.appendChild(fitSelect);
+    if (clip.fit.mode === 'cover') {
+      body.appendChild(buildSlider('Versatz X', -100, 100, 1, Math.round(clip.fit.panX * 100), v => {
+        clip.fit.panX = v / 100; clip.needsReprepare = true;
+      }));
+      body.appendChild(buildSlider('Versatz Y', -100, 100, 1, Math.round(clip.fit.panY * 100), v => {
+        clip.fit.panY = v / 100; clip.needsReprepare = true;
+      }));
+    }
+  }));
+
+  clipDetailEl.appendChild(buildCollapsibleSection('color', 'Farbe', body => {
+    body.appendChild(buildSlider('Helligkeit', -100, 100, 1, clip.brightness, v => { clip.brightness = v; }));
+    body.appendChild(buildSlider('Kontrast', -100, 100, 1, clip.contrast, v => { clip.contrast = v; }));
+    body.appendChild(buildSlider('Sättigung', -100, 100, 1, clip.saturation, v => { clip.saturation = v; }));
+    body.appendChild(buildSlider('Farbton', -180, 180, 1, clip.hue, v => { clip.hue = v; }));
+
+    const invertRow = document.createElement('label');
+    invertRow.className = 'param-checkbox';
+    const invertInput = document.createElement('input');
+    invertInput.type = 'checkbox';
+    invertInput.checked = clip.invert;
+    invertInput.addEventListener('change', () => { clip.invert = invertInput.checked; });
+    invertRow.append(invertInput, document.createTextNode('Invertieren'));
+    body.appendChild(invertRow);
+
+    const bwRow = document.createElement('label');
+    bwRow.className = 'param-checkbox';
+    const bwInput = document.createElement('input');
+    bwInput.type = 'checkbox';
+    bwInput.checked = clip.bw;
+    bwInput.addEventListener('change', () => { clip.bw = bwInput.checked; });
+    bwRow.append(bwInput, document.createTextNode('Schwarz/Weiß'));
+    body.appendChild(bwRow);
+
+    const applyAllColorBtn = document.createElement('button');
+    applyAllColorBtn.className = 'btn small-btn';
+    applyAllColorBtn.textContent = 'Farbe auf alle Clips anwenden';
+    applyAllColorBtn.addEventListener('click', () => {
+      const { brightness, contrast, saturation, hue, invert, bw } = clip;
+      clips.forEach(c => { if (c !== clip) Object.assign(c, { brightness, contrast, saturation, hue, invert, bw }); });
+    });
+    body.appendChild(applyAllColorBtn);
+  }));
+
+  clipDetailEl.appendChild(buildCollapsibleSection('mosh', 'Datamosh', body => {
+    body.appendChild(buildSlider('Wiederhol-Fenster (Frames)', 0, 30, 1, clip.dupWindow, v => { clip.dupWindow = v; }));
+    body.appendChild(buildSlider('Wiederholungen', 0, 20, 1, clip.dupCount, v => { clip.dupCount = v; }));
+    const noiseRow = buildSlider('Byte-Rauschen', 0, 100, 1, clip.noiseIntensity, v => { clip.noiseIntensity = v; });
+    const moshDice = document.createElement('button');
+    moshDice.className = 'icon-btn'; moshDice.title = 'Neu würfeln'; moshDice.textContent = '🎲';
+    moshDice.style.marginTop = '0.3rem';
+    moshDice.addEventListener('click', () => { clip.seed = Math.floor(Math.random() * 1e9); });
+    noiseRow.appendChild(moshDice);
+    body.appendChild(noiseRow);
+  }));
+
+  clipDetailEl.appendChild(buildCollapsibleSection('glitch', 'Glitch-Filter', body => {
+    body.appendChild(buildGlitchRow('RGB-Shift', 'Betrag', clip.rgbShift, 'amount', 0, 20, 1));
+    body.appendChild(buildGlitchRow('Noise', 'Stärke', clip.noise, 'strength', 0, 100, 1));
+    body.appendChild(buildGlitchRow('Pixelate', 'Blockgröße', clip.pixelate, 'blockSize', 2, 40, 1));
+    body.appendChild(buildGlitchRow('Scanlines', 'Intensität', clip.scanlines, 'intensity', 0, 100, 1));
+  }));
 }
 
 function snappedStart(clip, isFirst) {
@@ -489,7 +526,6 @@ function wireClipTimeline(clip, isFirst) {
 }
 
 function startClipDrag(clip, isFirst, canvasEl, clientX) {
-  clearTimeout(autoRenderTimer); // don't let a debounced reprepare swap clip.parsed mid-drag
   const frames = clip.parsed.frames;
   const rect = canvasEl.getBoundingClientRect();
   const x = (clientX - rect.left) * (canvasEl.width / rect.width);
@@ -519,17 +555,11 @@ function moveClipDrag(clientX) {
 }
 
 document.addEventListener('mousemove', e => moveClipDrag(e.clientX));
-document.addEventListener('mouseup', () => {
-  if (activeClipDrag) scheduleAutoRender();
-  activeClipDrag = null;
-});
+document.addEventListener('mouseup', () => { activeClipDrag = null; });
 document.addEventListener('touchmove', e => {
   if (activeClipDrag) { moveClipDrag(e.touches[0].clientX); e.preventDefault(); }
 }, { passive: false });
-document.addEventListener('touchend', () => {
-  if (activeClipDrag) scheduleAutoRender();
-  activeClipDrag = null;
-});
+document.addEventListener('touchend', () => { activeClipDrag = null; });
 
 window.addEventListener('resize', () => {
   const clip = clips.find(c => c.uid === activeClipId);
@@ -566,8 +596,6 @@ document.getElementById('applyCanvasBtn').addEventListener('click', () => {
   canvasCfg.bg = document.getElementById('canvasBgColor').value;
   canvasModal.classList.remove('open');
   clips.forEach(c => { if (c.parsed) c.needsReprepare = true; });
-  renderClipDetail();
-  scheduleAutoRender();
 });
 
 /* Maps mergeResult.segments (frame ranges in the merged/moshed output) to
@@ -589,8 +617,8 @@ function buildSegmentsPayload(colorClips, mergeResult) {
   });
 }
 
-/* ── Render ── */
-function doRender(clean, generation) {
+/* ── Render (manual-only — no auto-trigger) ── */
+function doRender(clean) {
   const validClips = clips.filter(c => c.parsed);
   if (validClips.length === 0) return Promise.resolve();
 
@@ -628,7 +656,6 @@ function doRender(clean, generation) {
       return res.blob();
     })
     .then(blob => {
-      if (generation !== undefined && generation !== renderGeneration) return; // superseded by a newer edit
       renderedBlob = blob;
       preview.src = URL.createObjectURL(blob);
       preview.style.display = 'block';
@@ -637,44 +664,58 @@ function doRender(clean, generation) {
       setStatus('ready', 'bereit');
     })
     .catch(err => {
-      if (generation !== undefined && generation !== renderGeneration) return;
       setStatus('ready', 'bereit');
-      console.error('Rendern fehlgeschlagen:', err.message);
+      alert(`Rendern fehlgeschlagen: ${err.message}`);
     });
 }
 
-/* ── Auto-render: debounced, with a generation counter so a stale response
-   from a superseded request can never overwrite a newer one's result. ── */
-function scheduleAutoRender() {
-  clearTimeout(autoRenderTimer);
-  autoRenderTimer = setTimeout(runAutoRender, 700);
-}
-
-async function runAutoRender() {
-  const myGen = ++renderGeneration;
+/* Any clip whose canvas/fit setting changed since its last /prepare needs a
+   fresh proxy before rendering — resolved here, synchronously, right
+   before the actual render, so a manual click always reflects the latest
+   settings regardless of what changed. */
+async function resolveDirtyClips() {
   const dirty = clips.filter(c => c.needsReprepare && c.parsed);
-  if (dirty.length) setStatus('busy', 'bereite vor…');
+  if (dirty.length === 0) return;
+  setStatus('busy', 'bereite vor…');
   for (const c of dirty) {
-    if (myGen !== renderGeneration) return; // superseded before we even got to render
     try {
       await reprepareClipInPlace(c);
     } catch (err) {
       c.error = err.message;
-      renderClipStrip();
-      renderClipDetail();
-      return;
     }
   }
-  if (dirty.length) { renderClipStrip(); renderClipDetail(); }
-  if (myGen !== renderGeneration) return;
-  await doRender(false, myGen);
+  renderClipStrip();
+  renderClipTimelineSection();
 }
 
-cleanBtn.addEventListener('click', () => {
-  cleanBtn.disabled = true;
-  doRender(true).finally(() => { cleanBtn.disabled = clips.filter(c => c.parsed).length === 0; });
+function setActionButtonsDisabled(disabled) {
+  const hasValid = clips.filter(c => c.parsed).length > 0;
+  cleanBtn.disabled = disabled || !hasValid;
+  renderBtn.disabled = disabled || !hasValid;
+}
+
+cleanBtn.addEventListener('click', async () => {
+  setActionButtonsDisabled(true);
+  try {
+    await resolveDirtyClips();
+    await doRender(true);
+  } finally {
+    setActionButtonsDisabled(false);
+  }
 });
-renderBtn.addEventListener('click', () => { clearTimeout(autoRenderTimer); runAutoRender(); });
+
+renderBtn.addEventListener('click', async () => {
+  setActionButtonsDisabled(true);
+  const originalText = renderBtn.textContent;
+  renderBtn.textContent = 'Aktualisiert…';
+  try {
+    await resolveDirtyClips();
+    await doRender(false);
+  } finally {
+    setActionButtonsDisabled(false);
+    renderBtn.textContent = originalText;
+  }
+});
 
 downloadBtn.addEventListener('click', () => {
   if (!renderedBlob) return;
@@ -787,6 +828,7 @@ infoModal.addEventListener('click', e => { if (e.target === infoModal) infoModal
 document.addEventListener('keydown', e => { if (e.key === 'Escape') infoModal.classList.remove('open'); });
 
 renderClipStrip();
+renderClipTimelineSection();
 renderClipDetail();
 updateButtons();
 setStatus('idle', 'bereit');
