@@ -371,6 +371,31 @@ select:hover { border-color: var(--border-hover); }
 }
 .layer-body select { margin-bottom: 0; font-size: 11px; padding: 0.45rem 0.6rem; }
 
+/* ── Inline small buttons (crop, mask panel) ── */
+.inline-btn-row {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.small-btn {
+  font-size: 10.5px;
+  padding: 0.4rem 0.6rem;
+}
+.small-btn.active-toggle {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+.icon-btn.mask-active { color: #facc15; }
+
+.mask-panel {
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
 /* ── Small modals / forms ── */
 .modal-small { max-width: 340px; }
 .num-input {

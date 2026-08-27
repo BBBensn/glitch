@@ -8,7 +8,7 @@ Projekt-spezifischer Kontext. Ergänzt `~/.claude/CLAUDE.md`.
 
 - **Name:** glitch
 - **Domain:** glitch.bensn.me
-- **Version:** v2.3.0
+- **Version:** v2.4.0
 - **Status:** active
 - **Stack:** Vanilla JS + Canvas API (Foto-Modus, clientseitig, kein Backend) + Flask/ffmpeg-Backend (Video-Modus, Port 5007)
 
@@ -104,20 +104,28 @@ Farbüberlagerung und Verlaufsüberlagerung teilen sich die Blend-Modi-Logik (`b
 
 ## Foto-Modus: Ebenen (Layers)
 
-**Datenmodell:** `layers[]` (unten→oben), jede Ebene: `{ img, workW/workH (Arbeitsauflösung, ≤1600px), x/y/w/h (Platzierung in Canvas-Pixeln), baseW/baseH/scalePct (Größen-Regler-Referenz), blendMode, opacity, visible, stack (eigener Effekt-Stack), dirty, renderedCanvas (Cache) }`. Der gemeinsame Canvas (`canvasW/canvasH`) ist entweder die (herunterskalierte) Auflösung des ersten hochgeladenen Bildes oder aus "Neue Leinwand" (freie Breite/Höhe + Hintergrund weiß/schwarz/transparent).
+**Datenmodell:** `layers[]` (unten→oben), jede Ebene: `{ img, workW/workH (Arbeitsauflösung, ≤1600px), x/y/w/h (Platzierung in Canvas-Pixeln), crop (siehe unten), basePixelScale/scalePct (Größen-Regler-Referenz), blendMode, opacity, visible, stack (eigener Effekt-Stack), dirty, renderedCanvas (Cache) }`. Der gemeinsame Canvas (`canvasW/canvasH`) ist entweder die (herunterskalierte) Auflösung des ersten hochgeladenen Bildes oder aus "Neue Leinwand" (freie Breite/Höhe + Hintergrund als Farbwähler oder transparent).
 
-**Rendering (`renderComposite()` in app.js):** pro sichtbarer Ebene bottom-to-top wird `renderLayerCanvas()` aufgerufen (rendert nur den *eigenen* Effekt-Stack der Ebene auf einen Offscreen-Canvas — **cached** über `layer.dirty`, wird nur bei Änderungen am Effekt-Stack dieser Ebene neu berechnet, nicht bei Verschieben/Resize/Deckkraft/Blend-Modus-Änderung anderer Ebenen), dann per `ctx.drawImage(..., x, y, w, h)` mit `ctx.globalAlpha` + `ctx.globalCompositeOperation` auf den Haupt-Canvas kompositiert.
+**Rendering (`renderComposite()` in app.js):** pro sichtbarer Ebene bottom-to-top wird `renderLayerCanvas()` aufgerufen (rendert nur den *eigenen*, ggf. zugeschnittenen Effekt-Stack der Ebene auf einen Offscreen-Canvas — **cached** über `layer.dirty`, wird nur bei Änderungen am Effekt-Stack/Crop dieser Ebene neu berechnet, nicht bei Verschieben/Resize/Deckkraft/Blend-Modus-Änderung anderer Ebenen), dann per `ctx.drawImage(..., x, y, w, h)` mit `ctx.globalAlpha` + `ctx.globalCompositeOperation` auf den Haupt-Canvas kompositiert. Danach: `drawCropHandles()` / `drawMaskOverlay()` / `drawCanvasCropOverlay()` — zeichnen nur etwas, wenn der jeweilige Modus aktiv ist.
 
 **Wichtig — Blend-Modi sind nativ:** die 16 Modi in `BLEND_MODES` (app.js) sind exakt die [CSS Compositing](https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/globalCompositeOperation) Werte (`multiply`, `screen`, `overlay`, `darken`, `lighten`, `color-dodge`, `color-burn`, `hard-light`, `soft-light`, `difference`, `exclusion`, `hue`, `saturation`, `color`, `luminosity`, plus `source-over` für "Normal"). Kein eigener Blend-Code nötig — der Browser übernimmt das. Das ist eine bewusste Design-Entscheidung: keine der 16 Photoshop-Modi händisch nachbauen.
 
 **Interaktion:**
 - Ebenen-Panel: Reorder per ↑/↓ oder Drag&Drop (⠿-Handle), Sichtbarkeit toggeln, Blend-Modus + Deckkraft + Größe (%) pro Ebene, Klick auf eine Karte macht sie zur `activeLayerId` — deren Effekt-Stack wird unten angezeigt/editiert
 - Verschieben: Drag direkt auf dem Haupt-Canvas (nur innerhalb der Bounds der *aktiven* Ebene startet der Drag, `startLayerDrag`/`moveLayerDrag`)
-- Größe: Prozent-Slider skaliert von `baseW/baseH` (der ursprünglichen "fit to canvas"-Größe) aus, zentriert um den Mittelpunkt
+- Größe: Prozent-Slider (`resizeLayer()`) skaliert `basePixelScale` (die ursprüngliche "fit to canvas"-Dichte) — `applyLayerTransform()` berechnet daraus `w/h` aus `crop.w/crop.h`, zentriert um den Mittelpunkt
 
-**Export in voller Qualität:** `renderCompositeAtResolution()` skaliert **alle** Ebenen gemeinsam hoch (Ziel: `EXPORT_MAX_DIM` = 4000px auf der langen Canvas-Seite) und rendert jede Ebene erneut mit `renderLayerAtScale()` gegen ihr Original-`img`. Params mit `scalesWithResolution: true` (z.B. `blockSize`, `amplitude`, RGB-Shift `amount`, Scanline `spacing`/`thickness`) werden proportional mitskaliert (`scaleParams()`), damit der Export optisch der Vorschau entspricht, nur schärfer. Neuer Foto-Effekt mit Pixel-Maßen? `scalesWithResolution: true` am Param nicht vergessen.
+**Crop (pro Ebene, `cropModeLayerId`):** "Zuschneiden"-Button pro Ebene aktiviert 4 Kanten-Handles (Mittelpunkte oben/unten/links/rechts) direkt auf den aktuell sichtbaren Ebenen-Bounds. Ziehen trimmt `layer.crop {x,y,w,h}` (in Arbeitsauflösungs-Pixeln der Ebene) von der jeweiligen Kante — der Rest des Bilds bleibt in derselben Pixeldichte erhalten (kein Reskalieren). Modell: `fullX/fullY` (Position der *ungeschnittenen* Ebene, bleibt während des Drags konstant) + `crop.x/y` bestimmen `layer.x/y = fullX + crop.x*scale`. "Crop zurücksetzen" stellt `crop = {0,0,workW,workH}` wieder her.
 
-**Noch nicht gebaut (nächste Version):** Crop pro Ebene/Komposition, Effekt-Masken (Kreis/Rechteck/Pen-Tool) — siehe Roadmap.
+**Crop (Komposition, `canvasCropMode`):** "Leinwand zuschneiden" im Toolbar zeigt ein Vorschau-Rechteck (`pendingCanvasCrop`) mit denselben 4 Kanten-Handles über der ganzen Leinwand, gedimmt außerhalb. "Übernehmen" verschiebt alle Ebenen um `-pendingCanvasCrop.x/y` und setzt `canvasW/canvasH` neu — "Abbrechen" verwirft die Auswahl.
+
+**Effekt-Masken (`fx.mask`, pro Eintrag im Effekt-Stack):** "◐"-Button an jedem Effekt öffnet den Masken-Editor (`toggleMaskEdit`) — Ziehen auf dem Canvas zeichnet ein Rechteck oder eine Ellipse (Shape-Umschalter im Panel) neu, Koordinaten als Sichtquotient 0–1 relativ zur Ebene gespeichert (auflösungsunabhängig). Zusätzlich Weichzeichnung (Box-Blur auf die Alpha-Maske, `boxBlurAlpha()`) und Invertieren. Rendering: der Effekt läuft immer auf dem *ganzen* Bild, das Ergebnis wird dann per `buildMaskAlpha()` pixelweise mit dem Original vor dem Effekt gemischt (`out = base*(1-a) + result*a`) — funktioniert für jeden Effekt ohne Sonderfall, auch für welche, die `imgData` in-place mutieren. **Kein Pen-Tool** (bewusst zurückgestellt, siehe Roadmap) — nur Rechteck/Ellipse.
+
+Alle drei Modi (`cropModeLayerId`, `canvasCropMode`, `maskEditFx`) sind gegenseitig exklusiv (`exitEditModes()`) und broadcasten sich in Toolbar/Sidebar via `renderLayerList()`/`renderStackUI()` — nach jeder Drag-*Ende* (nicht während des Drags, das würde die DOM-Listener zerstören) muss die passende UI neu gerendert werden, sonst bleiben Buttons wie "Crop zurücksetzen" oder der Feather-Regler unsichtbar (war ein echter Bug beim ersten Bau, siehe Git-History).
+
+**Export in voller Qualität:** `renderCompositeAtResolution()` skaliert **alle** Ebenen gemeinsam hoch (Ziel: `EXPORT_MAX_DIM` = 4000px auf der langen Canvas-Seite) und rendert jede Ebene erneut mit `renderLayerAtScale()` gegen ihr Original-`img`, respektiert dabei `crop` und `mask` genauso wie die Live-Vorschau. Params mit `scalesWithResolution: true` (z.B. `blockSize`, `amplitude`, RGB-Shift `amount`, Scanline `spacing`/`thickness`) werden proportional mitskaliert (`scaleParams()`), damit der Export optisch der Vorschau entspricht, nur schärfer. Neuer Foto-Effekt mit Pixel-Maßen? `scalesWithResolution: true` am Param nicht vergessen.
+
+**Noch nicht gebaut:** Pen-Tool/Lasso für Masken (bewusst zurückgestellt — "wenn nicht zu aufwendig" war die Vorgabe, und der Rest war schon umfangreich genug).
 
 ---
 
@@ -185,7 +193,7 @@ ffmpeg wurde für dieses Projekt via `apt install ffmpeg` auf dem Server install
 | v2.1.1 | Video: Info-Modal erklärt Datamoshing-Prinzip und alle Regler | ✅ done |
 | v2.2.0 | Foto: Drag&Drop-Reordering, Export in voller Auflösung; Video: Grundkorrektur, Export in 720p/1080p | ✅ done |
 | v2.3.0 | Foto: Ebenen-System — mehrere Bilder überlagern, 16 native Blend-Modi, Deckkraft, Größe, Drag-to-Move, "Neue Leinwand" für Collagen | ✅ done |
-| v2.4.0 | Foto: Crop pro Ebene/Komposition, Masken-Funktion (Kreis/Rechteck/Pen-Tool, Effekte nur in ausgewähltem Bereich anwenden) | geplant |
+| v2.4.0 | Foto: Crop pro Ebene/Komposition, Masken-Funktion (Kreis/Rechteck, Effekte nur in ausgewähltem Bereich anwenden), Leinwand-Hintergrund per Farbwähler | ✅ done |
 
 ---
 

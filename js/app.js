@@ -171,7 +171,7 @@ const BLEND_MODES = [
   ['hue', 'Farbton'], ['saturation', 'Sättigung'], ['color', 'Farbe'], ['luminosity', 'Luminanz'],
 ];
 
-let canvasW = 0, canvasH = 0, canvasBg = 'white';
+let canvasW = 0, canvasH = 0, canvasBg = '#ffffff';
 let layers = []; // bottom -> top
 let activeLayerId = null;
 let uidCounter = 1;
@@ -298,6 +298,23 @@ function renderLayerList() {
     body.appendChild(buildInlineSlider('Deckkraft', 0, 100, 1, layer.opacity, v => { layer.opacity = v; scheduleRender(); }));
     body.appendChild(buildInlineSlider('Größe', 10, 300, 1, Math.round(layer.scalePct), v => { resizeLayer(layer, v); scheduleRender(); }));
 
+    const cropRow = document.createElement('div');
+    cropRow.className = 'inline-btn-row';
+    const cropBtn = document.createElement('button');
+    cropBtn.className = 'btn btn-ghost small-btn' + (cropModeLayerId === layer.uid ? ' active-toggle' : '');
+    cropBtn.textContent = cropModeLayerId === layer.uid ? 'Zuschneiden ✓' : 'Zuschneiden';
+    cropBtn.addEventListener('click', e => { e.stopPropagation(); toggleCropMode(layer); });
+    cropRow.appendChild(cropBtn);
+    const isCropped = layer.crop.x !== 0 || layer.crop.y !== 0 || layer.crop.w !== layer.workW || layer.crop.h !== layer.workH;
+    if (isCropped) {
+      const resetCropBtn = document.createElement('button');
+      resetCropBtn.className = 'btn btn-ghost small-btn';
+      resetCropBtn.textContent = 'Crop zurücksetzen';
+      resetCropBtn.addEventListener('click', e => { e.stopPropagation(); resetLayerCrop(layer); });
+      cropRow.appendChild(resetCropBtn);
+    }
+    body.appendChild(cropRow);
+
     card.appendChild(body);
 
     card.addEventListener('click', () => { activeLayerId = layer.uid; renderLayerList(); renderStackUI(); });
@@ -344,13 +361,17 @@ function buildInlineSlider(label, min, max, step, value, onInput) {
   return row;
 }
 
+function applyLayerTransform(layer) {
+  const scale = layer.basePixelScale * layer.scalePct / 100;
+  layer.w = layer.crop.w * scale;
+  layer.h = layer.crop.h * scale;
+}
+
 function resizeLayer(layer, scalePct) {
-  const scale = scalePct / 100;
   const cx = layer.x + layer.w / 2, cy = layer.y + layer.h / 2;
-  const w = layer.baseW * scale, h = layer.baseH * scale;
-  layer.w = w; layer.h = h;
-  layer.x = cx - w / 2; layer.y = cy - h / 2;
   layer.scalePct = scalePct;
+  applyLayerTransform(layer);
+  layer.x = cx - layer.w / 2; layer.y = cy - layer.h / 2;
 }
 
 /* ── Effect stack (of the active layer) ── */
@@ -427,6 +448,12 @@ function renderStackUI() {
     down.addEventListener('click', () => { [fxStack[index + 1], fxStack[index]] = [fxStack[index], fxStack[index + 1]]; markActiveLayerDirty(); renderStackUI(); scheduleRender(); });
     actions.appendChild(down);
 
+    const maskBtn = document.createElement('button');
+    maskBtn.className = 'icon-btn' + (fx.mask ? ' mask-active' : ''); maskBtn.title = 'Maske';
+    maskBtn.textContent = '◐';
+    maskBtn.addEventListener('click', () => toggleMaskEdit(fx));
+    actions.appendChild(maskBtn);
+
     const toggle = document.createElement('button');
     toggle.className = 'icon-btn'; toggle.title = fx.enabled ? 'Deaktivieren' : 'Aktivieren';
     toggle.textContent = fx.enabled ? '⏵' : '⏸';
@@ -465,8 +492,65 @@ function renderStackUI() {
     }
     if (body.children.length > 0) card.appendChild(body);
 
+    if (maskEditFx === fx) card.appendChild(buildMaskPanel(fx, layer));
+
     effectStackEl.appendChild(card);
   });
+}
+
+function buildMaskPanel(fx, layer) {
+  const panel = document.createElement('div');
+  panel.className = 'mask-panel';
+
+  const hint = document.createElement('div');
+  hint.className = 'timeline-hint';
+  hint.textContent = 'Auf dem Bild ziehen, um die Maske zu (neu) zeichnen.';
+  panel.appendChild(hint);
+
+  const shapeRow = document.createElement('div');
+  shapeRow.className = 'inline-btn-row';
+  for (const [type, label] of [['rect', '▭ Rechteck'], ['ellipse', '◯ Kreis']]) {
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-ghost small-btn' + (maskEditShapeType === type ? ' active-toggle' : '');
+    btn.textContent = label;
+    btn.addEventListener('click', () => { maskEditShapeType = type; renderStackUI(); });
+    shapeRow.appendChild(btn);
+  }
+  panel.appendChild(shapeRow);
+
+  if (fx.mask) {
+    panel.appendChild(buildInlineSlider('Weichzeichnung', 0, 30, 1, Math.round((fx.mask.feather || 0) * 100), v => {
+      fx.mask.feather = v / 100; markActiveLayerDirty(); scheduleRender();
+    }));
+
+    const invertLabel = document.createElement('label');
+    invertLabel.className = 'param-checkbox';
+    const invertInput = document.createElement('input');
+    invertInput.type = 'checkbox';
+    invertInput.checked = !!fx.mask.invert;
+    invertInput.addEventListener('change', () => { fx.mask.invert = invertInput.checked; markActiveLayerDirty(); scheduleRender(); });
+    invertLabel.appendChild(invertInput);
+    invertLabel.appendChild(document.createTextNode('Invertieren'));
+    panel.appendChild(invertLabel);
+  }
+
+  const actionRow = document.createElement('div');
+  actionRow.className = 'inline-btn-row';
+  const removeMaskBtn = document.createElement('button');
+  removeMaskBtn.className = 'btn btn-ghost small-btn';
+  removeMaskBtn.textContent = 'Maske entfernen';
+  removeMaskBtn.disabled = !fx.mask;
+  removeMaskBtn.addEventListener('click', () => { fx.mask = null; markActiveLayerDirty(); renderStackUI(); scheduleRender(); });
+  actionRow.appendChild(removeMaskBtn);
+
+  const doneBtn = document.createElement('button');
+  doneBtn.className = 'btn btn-ghost small-btn';
+  doneBtn.textContent = 'Fertig';
+  doneBtn.addEventListener('click', () => toggleMaskEdit(fx));
+  actionRow.appendChild(doneBtn);
+  panel.appendChild(actionRow);
+
+  return panel;
 }
 
 function buildParamControl(fx, param) {
@@ -689,19 +773,84 @@ document.addEventListener('touchmove', e => {
 }, { passive: false });
 document.addEventListener('touchend', () => { curveDrag = null; });
 
+/* ── Masking ── */
+function insideMaskShape(mask, px, py, w, h) {
+  if (mask.type === 'rect') {
+    return px >= mask.x * w && px <= (mask.x + mask.w) * w && py >= mask.y * h && py <= (mask.y + mask.h) * h;
+  }
+  if (mask.type === 'ellipse') {
+    const nx = (px - mask.cx * w) / (mask.rx * w || 1), ny = (py - mask.cy * h) / (mask.ry * h || 1);
+    return nx * nx + ny * ny <= 1;
+  }
+  return true;
+}
+
+function boxBlurAlpha(src, w, h, radius) {
+  if (radius <= 0) return src;
+  const tmp = new Float32Array(w * h);
+  const out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    let sum = 0, count = 0;
+    for (let x = -radius; x < w; x++) {
+      if (x + radius < w) { sum += src[y * w + x + radius]; count++; }
+      if (x - radius - 1 >= 0) { sum -= src[y * w + x - radius - 1]; count--; }
+      if (x >= 0) tmp[y * w + x] = sum / count;
+    }
+  }
+  for (let x = 0; x < w; x++) {
+    let sum = 0, count = 0;
+    for (let y = -radius; y < h; y++) {
+      if (y + radius < h) { sum += tmp[(y + radius) * w + x]; count++; }
+      if (y - radius - 1 >= 0) { sum -= tmp[(y - radius - 1) * w + x]; count--; }
+      if (y >= 0) out[y * w + x] = sum / count;
+    }
+  }
+  return out;
+}
+
+function buildMaskAlpha(mask, w, h) {
+  let alpha = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) alpha[y * w + x] = insideMaskShape(mask, x + 0.5, y + 0.5, w, h) ? 1 : 0;
+  }
+  if (mask.feather > 0) alpha = boxBlurAlpha(alpha, w, h, Math.round(mask.feather * Math.min(w, h)));
+  if (mask.invert) for (let i = 0; i < alpha.length; i++) alpha[i] = 1 - alpha[i];
+  return alpha;
+}
+
 /* ── Compositing pipeline ── */
 async function renderLayerCanvas(layer) {
   if (layer.renderedCanvas && !layer.dirty) return layer.renderedCanvas;
+  const cw = Math.max(1, Math.round(layer.crop.w)), ch = Math.max(1, Math.round(layer.crop.h));
   const c = document.createElement('canvas');
-  c.width = layer.workW; c.height = layer.workH;
+  c.width = cw; c.height = ch;
   const cx = c.getContext('2d', { willReadFrequently: true });
-  cx.drawImage(layer.img, 0, 0, layer.workW, layer.workH);
-  let imgData = cx.getImageData(0, 0, layer.workW, layer.workH);
+  const natScale = layer.img.naturalWidth / layer.workW;
+  cx.drawImage(layer.img,
+    layer.crop.x * natScale, layer.crop.y * natScale, layer.crop.w * natScale, layer.crop.h * natScale,
+    0, 0, cw, ch);
+  let imgData = cx.getImageData(0, 0, cw, ch);
   for (const fx of layer.stack) {
     if (!fx.enabled) continue;
     const def = EFFECT_DEFS.find(d => d.id === fx.defId);
-    const result = await def.apply(imgData, layer.workW, layer.workH, fx.params);
-    if (result) imgData = result;
+    if (fx.mask) {
+      const baseData = new Uint8ClampedArray(imgData.data);
+      const result = await def.apply(imgData, cw, ch, fx.params);
+      const resultData = (result || imgData).data;
+      const maskAlpha = buildMaskAlpha(fx.mask, cw, ch);
+      const out = new Uint8ClampedArray(baseData.length);
+      for (let i = 0; i < out.length; i += 4) {
+        const a = maskAlpha[i / 4];
+        out[i] = baseData[i] * (1 - a) + resultData[i] * a;
+        out[i + 1] = baseData[i + 1] * (1 - a) + resultData[i + 1] * a;
+        out[i + 2] = baseData[i + 2] * (1 - a) + resultData[i + 2] * a;
+        out[i + 3] = baseData[i + 3] * (1 - a) + resultData[i + 3] * a;
+      }
+      imgData = new ImageData(out, cw, ch);
+    } else {
+      const result = await def.apply(imgData, cw, ch, fx.params);
+      if (result) imgData = result;
+    }
   }
   cx.putImageData(imgData, 0, 0);
   layer.renderedCanvas = c;
@@ -715,8 +864,7 @@ async function renderComposite() {
   if (canvas.width !== canvasW) canvas.width = canvasW;
   if (canvas.height !== canvasH) canvas.height = canvasH;
   ctx.clearRect(0, 0, canvasW, canvasH);
-  if (canvasBg === 'white') { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvasW, canvasH); }
-  else if (canvasBg === 'black') { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, canvasW, canvasH); }
+  if (canvasBg !== 'transparent') { ctx.fillStyle = canvasBg; ctx.fillRect(0, 0, canvasW, canvasH); }
 
   for (const layer of layers) {
     if (!layer.visible) continue;
@@ -727,6 +875,10 @@ async function renderComposite() {
     ctx.drawImage(layerCanvas, layer.x, layer.y, layer.w, layer.h);
     ctx.restore();
   }
+
+  drawCropHandles();
+  drawMaskOverlay();
+  drawCanvasCropOverlay();
   setStatus('ready', 'bereit');
 }
 
@@ -758,7 +910,7 @@ function addImageLayer(file) {
 
     let x, y, w, h;
     if (canvasW === 0) {
-      canvasW = workW; canvasH = workH; canvasBg = 'white';
+      canvasW = workW; canvasH = workH; canvasBg = '#ffffff';
       x = 0; y = 0; w = workW; h = workH;
     } else {
       ({ x, y, w, h } = fitLayerToCanvas(workW, workH));
@@ -766,7 +918,9 @@ function addImageLayer(file) {
 
     const layer = {
       uid: uidCounter++, name: file.name || `Ebene ${layers.length + 1}`,
-      img, workW, workH, x, y, w, h, baseW: w, baseH: h, scalePct: 100,
+      img, workW, workH, x, y, w, h,
+      crop: { x: 0, y: 0, w: workW, h: workH },
+      basePixelScale: w / workW, scalePct: 100,
       blendMode: 'source-over', opacity: 100, visible: true, stack: [], dirty: true,
     };
     layers.push(layer);
@@ -810,11 +964,16 @@ document.getElementById('newCanvasBtn').addEventListener('click', () => canvasMo
 document.getElementById('closeCanvasModalBtn').addEventListener('click', () => canvasModal.classList.remove('open'));
 canvasModal.addEventListener('click', e => { if (e.target === canvasModal) canvasModal.classList.remove('open'); });
 
+document.getElementById('canvasBgTransparent').addEventListener('change', e => {
+  document.getElementById('canvasBgColor').disabled = e.target.checked;
+});
+
 document.getElementById('createCanvasBtn').addEventListener('click', () => {
   const w = clamp(parseInt(document.getElementById('canvasWidthInput').value, 10) || 1200, 16, 4000);
   const h = clamp(parseInt(document.getElementById('canvasHeightInput').value, 10) || 800, 16, 4000);
   canvasW = w; canvasH = h;
-  canvasBg = document.getElementById('canvasBgSelect').value;
+  canvasBg = document.getElementById('canvasBgTransparent').checked
+    ? 'transparent' : document.getElementById('canvasBgColor').value;
   layers = [];
   activeLayerId = null;
   dimText.textContent = `${w}×${h}px`;
@@ -848,14 +1007,249 @@ function moveLayerDrag(clientX, clientY) {
   scheduleRender();
 }
 
-canvas.addEventListener('mousedown', e => startLayerDrag(e.clientX, e.clientY));
-document.addEventListener('mousemove', e => moveLayerDrag(e.clientX, e.clientY));
-document.addEventListener('mouseup', () => { layerDrag = null; });
-canvas.addEventListener('touchstart', e => { startLayerDrag(e.touches[0].clientX, e.touches[0].clientY); }, { passive: true });
+/* ── Per-layer crop: drag the edges of the active layer's bounds inward/outward ── */
+let cropModeLayerId = null;
+let cropDrag = null; // { layer, edge, fullX, fullY, scale }
+
+function cropHandlePoints(layer) {
+  const { x, y, w, h } = layer;
+  return [['left', x, y + h / 2], ['right', x + w, y + h / 2], ['top', x + w / 2, y], ['bottom', x + w / 2, y + h]];
+}
+
+function drawCropHandles() {
+  const layer = layers.find(l => l.uid === cropModeLayerId);
+  if (!layer) return;
+  ctx.save();
+  ctx.strokeStyle = '#00A6FB'; ctx.lineWidth = 2; ctx.setLineDash([6, 4]);
+  ctx.strokeRect(layer.x, layer.y, layer.w, layer.h);
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#00A6FB';
+  for (const [, px, py] of cropHandlePoints(layer)) ctx.fillRect(px - 5, py - 5, 10, 10);
+  ctx.restore();
+}
+
+function startCropDrag(clientX, clientY) {
+  if (!cropModeLayerId) return false;
+  const layer = layers.find(l => l.uid === cropModeLayerId);
+  if (!layer) return false;
+  const [px, py] = canvasPointFromEvent(clientX, clientY);
+  for (const [edge, ex, ey] of cropHandlePoints(layer)) {
+    if (Math.hypot(px - ex, py - ey) < 14) {
+      const scale = layer.basePixelScale * layer.scalePct / 100;
+      cropDrag = { layer, edge, fullX: layer.x - layer.crop.x * scale, fullY: layer.y - layer.crop.y * scale, scale };
+      return true;
+    }
+  }
+  return true; // consume the click while in crop mode, even off-handle
+}
+
+function moveCropDrag(clientX, clientY) {
+  if (!cropDrag) return;
+  const { layer, edge, fullX, fullY, scale } = cropDrag;
+  const [px, py] = canvasPointFromEvent(clientX, clientY);
+  const crop = layer.crop;
+  if (edge === 'right') {
+    crop.w = clamp((px - fullX) / scale, crop.x + 10, layer.workW) - crop.x;
+  } else if (edge === 'left') {
+    const localX = clamp((px - fullX) / scale, 0, crop.x + crop.w - 10);
+    crop.w = crop.x + crop.w - localX; crop.x = localX;
+  } else if (edge === 'bottom') {
+    crop.h = clamp((py - fullY) / scale, crop.y + 10, layer.workH) - crop.y;
+  } else if (edge === 'top') {
+    const localY = clamp((py - fullY) / scale, 0, crop.y + crop.h - 10);
+    crop.h = crop.y + crop.h - localY; crop.y = localY;
+  }
+  layer.x = fullX + crop.x * scale; layer.y = fullY + crop.y * scale;
+  layer.w = crop.w * scale; layer.h = crop.h * scale;
+  layer.dirty = true;
+  scheduleRender();
+}
+
+function exitEditModes() {
+  canvasCropMode = false;
+  cropModeLayerId = null;
+  maskEditFx = null;
+  document.getElementById('canvasCropConfirm').style.display = 'none';
+  document.getElementById('canvasCropCancel').style.display = 'none';
+}
+
+function toggleCropMode(layer) {
+  const wasActive = cropModeLayerId === layer.uid;
+  exitEditModes();
+  if (!wasActive) cropModeLayerId = layer.uid;
+  renderLayerList();
+  renderStackUI();
+  scheduleRender();
+}
+
+function resetLayerCrop(layer) {
+  layer.crop = { x: 0, y: 0, w: layer.workW, h: layer.workH };
+  applyLayerTransform(layer);
+  layer.dirty = true;
+  scheduleRender();
+}
+
+/* ── Composition crop: trim the shared canvas bounds, shifting all layers ── */
+let canvasCropMode = false;
+let canvasCropDrag = null;
+let pendingCanvasCrop = null;
+
+function canvasCropHandlePoints() {
+  const r = pendingCanvasCrop;
+  return [['left', r.x, r.y + r.h / 2], ['right', r.x + r.w, r.y + r.h / 2], ['top', r.x + r.w / 2, r.y], ['bottom', r.x + r.w / 2, r.y + r.h]];
+}
+
+function drawCanvasCropOverlay() {
+  if (!canvasCropMode) return;
+  const r = pendingCanvasCrop;
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(0, 0, canvasW, r.y);
+  ctx.fillRect(0, r.y + r.h, canvasW, canvasH - r.y - r.h);
+  ctx.fillRect(0, r.y, r.x, r.h);
+  ctx.fillRect(r.x + r.w, r.y, canvasW - r.x - r.w, r.h);
+  ctx.strokeStyle = '#00A6FB'; ctx.lineWidth = 2;
+  ctx.strokeRect(r.x, r.y, r.w, r.h);
+  ctx.fillStyle = '#00A6FB';
+  for (const [, px, py] of canvasCropHandlePoints()) ctx.fillRect(px - 5, py - 5, 10, 10);
+  ctx.restore();
+}
+
+function startCanvasCropDrag(clientX, clientY) {
+  if (!canvasCropMode) return false;
+  const [px, py] = canvasPointFromEvent(clientX, clientY);
+  for (const [edge, ex, ey] of canvasCropHandlePoints()) {
+    if (Math.hypot(px - ex, py - ey) < 14) { canvasCropDrag = { edge }; return true; }
+  }
+  return true;
+}
+
+function moveCanvasCropDrag(clientX, clientY) {
+  if (!canvasCropDrag) return;
+  const [px, py] = canvasPointFromEvent(clientX, clientY);
+  const r = pendingCanvasCrop;
+  if (canvasCropDrag.edge === 'right') r.w = clamp(px, r.x + 20, canvasW) - r.x;
+  else if (canvasCropDrag.edge === 'left') { const nx = clamp(px, 0, r.x + r.w - 20); r.w = r.x + r.w - nx; r.x = nx; }
+  else if (canvasCropDrag.edge === 'bottom') r.h = clamp(py, r.y + 20, canvasH) - r.y;
+  else if (canvasCropDrag.edge === 'top') { const ny = clamp(py, 0, r.y + r.h - 20); r.h = r.y + r.h - ny; r.y = ny; }
+  scheduleRender();
+}
+
+function toggleCanvasCropMode() {
+  const wasActive = canvasCropMode;
+  exitEditModes();
+  if (!wasActive) {
+    canvasCropMode = true;
+    pendingCanvasCrop = { x: 0, y: 0, w: canvasW, h: canvasH };
+    document.getElementById('canvasCropConfirm').style.display = 'inline-block';
+    document.getElementById('canvasCropCancel').style.display = 'inline-block';
+  }
+  renderLayerList();
+  renderStackUI();
+  scheduleRender();
+}
+
+function applyCanvasCrop() {
+  const r = pendingCanvasCrop;
+  for (const layer of layers) { layer.x -= r.x; layer.y -= r.y; }
+  canvasW = Math.round(r.w); canvasH = Math.round(r.h);
+  dimText.textContent = `${canvasW}×${canvasH}px`;
+  toggleCanvasCropMode();
+}
+
+/* ── Effect masks: drag to (re)define a circle/rect region on the active layer ── */
+let maskEditFx = null;
+let maskEditShapeType = 'rect';
+let maskDrawStart = null;
+
+function drawMaskOverlay() {
+  if (!maskEditFx || !maskEditFx.mask) return;
+  const layer = getActiveLayer();
+  if (!layer) return;
+  const m = maskEditFx.mask;
+  ctx.save();
+  ctx.strokeStyle = '#facc15'; ctx.lineWidth = 2; ctx.setLineDash([6, 4]);
+  if (m.type === 'rect') {
+    ctx.strokeRect(layer.x + m.x * layer.w, layer.y + m.y * layer.h, m.w * layer.w, m.h * layer.h);
+  } else {
+    ctx.beginPath();
+    ctx.ellipse(layer.x + m.cx * layer.w, layer.y + m.cy * layer.h, Math.abs(m.rx * layer.w), Math.abs(m.ry * layer.h), 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function startMaskDraw(clientX, clientY) {
+  if (!maskEditFx) return false;
+  const layer = getActiveLayer();
+  if (!layer) return true;
+  const [px, py] = canvasPointFromEvent(clientX, clientY);
+  maskDrawStart = { px, py, layer };
+  return true;
+}
+
+function moveMaskDraw(clientX, clientY) {
+  if (!maskDrawStart) return;
+  const { layer } = maskDrawStart;
+  const [px, py] = canvasPointFromEvent(clientX, clientY);
+  const x0 = clamp((Math.min(maskDrawStart.px, px) - layer.x) / layer.w, 0, 1);
+  const y0 = clamp((Math.min(maskDrawStart.py, py) - layer.y) / layer.h, 0, 1);
+  const x1 = clamp((Math.max(maskDrawStart.px, px) - layer.x) / layer.w, 0, 1);
+  const y1 = clamp((Math.max(maskDrawStart.py, py) - layer.y) / layer.h, 0, 1);
+  const prev = maskEditFx.mask || {};
+  if (maskEditShapeType === 'rect') {
+    maskEditFx.mask = { type: 'rect', x: x0, y: y0, w: x1 - x0, h: y1 - y0, feather: prev.feather || 0, invert: prev.invert || false };
+  } else {
+    maskEditFx.mask = { type: 'ellipse', cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, rx: (x1 - x0) / 2, ry: (y1 - y0) / 2, feather: prev.feather || 0, invert: prev.invert || false };
+  }
+  layer.dirty = true;
+  scheduleRender();
+}
+
+function toggleMaskEdit(fx) {
+  const wasActive = maskEditFx === fx;
+  exitEditModes();
+  if (!wasActive) {
+    maskEditFx = fx;
+    maskEditShapeType = fx.mask?.type === 'ellipse' ? 'ellipse' : 'rect';
+  }
+  renderLayerList();
+  renderStackUI();
+  scheduleRender();
+}
+
+function mousePosHandlers(clientX, clientY) {
+  if (startCanvasCropDrag(clientX, clientY)) return;
+  if (startCropDrag(clientX, clientY)) return;
+  if (startMaskDraw(clientX, clientY)) return;
+  startLayerDrag(clientX, clientY);
+}
+function moveHandlers(clientX, clientY) {
+  if (canvasCropDrag) { moveCanvasCropDrag(clientX, clientY); return; }
+  if (cropDrag) { moveCropDrag(clientX, clientY); return; }
+  if (maskDrawStart) { moveMaskDraw(clientX, clientY); return; }
+  moveLayerDrag(clientX, clientY);
+}
+function endHandlers() {
+  const hadCropDrag = cropDrag !== null;
+  const hadMaskDraw = maskDrawStart !== null;
+  canvasCropDrag = null; cropDrag = null; maskDrawStart = null; layerDrag = null;
+  if (hadCropDrag) renderLayerList();
+  if (hadMaskDraw) renderStackUI();
+}
+
+canvas.addEventListener('mousedown', e => mousePosHandlers(e.clientX, e.clientY));
+document.addEventListener('mousemove', e => moveHandlers(e.clientX, e.clientY));
+document.addEventListener('mouseup', endHandlers);
+canvas.addEventListener('touchstart', e => { mousePosHandlers(e.touches[0].clientX, e.touches[0].clientY); }, { passive: true });
 document.addEventListener('touchmove', e => {
-  if (layerDrag) { moveLayerDrag(e.touches[0].clientX, e.touches[0].clientY); e.preventDefault(); }
+  if (canvasCropDrag || cropDrag || maskDrawStart || layerDrag) { moveHandlers(e.touches[0].clientX, e.touches[0].clientY); e.preventDefault(); }
 }, { passive: false });
-document.addEventListener('touchend', () => { layerDrag = null; });
+document.addEventListener('touchend', endHandlers);
+
+document.getElementById('canvasCropBtn').addEventListener('click', toggleCanvasCropMode);
+document.getElementById('canvasCropConfirm').addEventListener('click', applyCanvasCrop);
+document.getElementById('canvasCropCancel').addEventListener('click', toggleCanvasCropMode);
 
 document.getElementById('resetBtn').addEventListener('click', () => {
   const layer = getActiveLayer();
@@ -906,19 +1300,38 @@ function scaleParams(def, params, factor) {
 }
 
 async function renderLayerAtScale(layer, factor) {
-  const w = Math.max(1, Math.round(layer.workW * factor));
-  const h = Math.max(1, Math.round(layer.workH * factor));
+  const w = Math.max(1, Math.round(layer.crop.w * factor));
+  const h = Math.max(1, Math.round(layer.crop.h * factor));
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
   const cx = c.getContext('2d', { willReadFrequently: true });
-  cx.drawImage(layer.img, 0, 0, w, h);
+  const natScale = layer.img.naturalWidth / layer.workW;
+  cx.drawImage(layer.img,
+    layer.crop.x * natScale, layer.crop.y * natScale, layer.crop.w * natScale, layer.crop.h * natScale,
+    0, 0, w, h);
   let imgData = cx.getImageData(0, 0, w, h);
   for (const fx of layer.stack) {
     if (!fx.enabled) continue;
     const def = EFFECT_DEFS.find(d => d.id === fx.defId);
     const params = scaleParams(def, fx.params, factor);
-    const result = await def.apply(imgData, w, h, params);
-    if (result) imgData = result;
+    if (fx.mask) {
+      const baseData = new Uint8ClampedArray(imgData.data);
+      const result = await def.apply(imgData, w, h, params);
+      const resultData = (result || imgData).data;
+      const maskAlpha = buildMaskAlpha(fx.mask, w, h);
+      const out = new Uint8ClampedArray(baseData.length);
+      for (let i = 0; i < out.length; i += 4) {
+        const a = maskAlpha[i / 4];
+        out[i] = baseData[i] * (1 - a) + resultData[i] * a;
+        out[i + 1] = baseData[i + 1] * (1 - a) + resultData[i + 1] * a;
+        out[i + 2] = baseData[i + 2] * (1 - a) + resultData[i + 2] * a;
+        out[i + 3] = baseData[i + 3] * (1 - a) + resultData[i + 3] * a;
+      }
+      imgData = new ImageData(out, w, h);
+    } else {
+      const result = await def.apply(imgData, w, h, params);
+      if (result) imgData = result;
+    }
   }
   cx.putImageData(imgData, 0, 0);
   return c;
@@ -928,8 +1341,7 @@ async function renderCompositeAtResolution(exportW, exportH) {
   const c = document.createElement('canvas');
   c.width = exportW; c.height = exportH;
   const cx = c.getContext('2d');
-  if (canvasBg === 'white') { cx.fillStyle = '#fff'; cx.fillRect(0, 0, exportW, exportH); }
-  else if (canvasBg === 'black') { cx.fillStyle = '#000'; cx.fillRect(0, 0, exportW, exportH); }
+  if (canvasBg !== 'transparent') { cx.fillStyle = canvasBg; cx.fillRect(0, 0, exportW, exportH); }
   const factor = exportW / canvasW;
   for (const layer of layers) {
     if (!layer.visible) continue;

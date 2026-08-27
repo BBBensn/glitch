@@ -43,6 +43,9 @@
         <button class="btn" id="newCanvasBtn">Neue Leinwand</button>
         <button class="btn" id="randomBtn">🎲 Zufalls-Glitch</button>
         <button class="btn btn-ghost" id="resetBtn">Zurücksetzen</button>
+        <button class="btn btn-ghost" id="canvasCropBtn">Leinwand zuschneiden</button>
+        <button class="btn btn-primary" id="canvasCropConfirm" style="display:none;">Übernehmen</button>
+        <button class="btn btn-ghost" id="canvasCropCancel" style="display:none;">Abbrechen</button>
         <div class="toolbar-spacer"></div>
         <span class="dim-text" id="dimText"></span>
         <button class="btn btn-primary" id="downloadBtn">Download</button>
@@ -93,11 +96,13 @@
       </div>
       <div class="param-row">
         <span class="param-label">Hintergrund</span>
-        <select id="canvasBgSelect">
-          <option value="white">Weiß</option>
-          <option value="black">Schwarz</option>
-          <option value="transparent">Transparent</option>
-        </select>
+        <input type="color" id="canvasBgColor" class="param-color" value="#ffffff">
+      </div>
+      <div class="param-row">
+        <label class="param-checkbox">
+          <input type="checkbox" id="canvasBgTransparent">
+          Transparent
+        </label>
       </div>
       <button class="btn btn-primary" id="createCanvasBtn" style="width:100%; margin-top:0.5rem;">Erstellen</button>
     </div>
