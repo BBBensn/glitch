@@ -655,6 +655,15 @@ input[type="range"]::-moz-range-thumb {
 }
 .clip-status.error { color: var(--accent-red); }
 
+.clip-color-panel {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
 .timeline {
   width: 100%;
   height: 50px;

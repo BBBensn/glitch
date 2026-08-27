@@ -3,6 +3,7 @@ renders edited (byte-corrupted) AVIs back to playable MP4. All actual
 frame manipulation happens client-side in the browser; this service only
 wraps ffmpeg for the two steps that need a real codec."""
 
+import json
 import os
 import subprocess
 import tempfile
@@ -78,6 +79,36 @@ def prepare():
                           as_attachment=True, download_name='moshable.avi')
 
 
+def build_color_filter(segments):
+    """One eq/hue/negate chain per clip segment (frame-range within the merged
+    video), then concat back together — lets each original clip keep its own
+    brightness/contrast/saturation/hue/invert in the final render."""
+    if not segments:
+        return None
+    try:
+        parts = []
+        for i, seg in enumerate(segments):
+            start = max(0, int(seg.get('start', 0)))
+            end = max(start + 1, int(seg.get('end', start + 1)))
+            b = clamp(float(seg.get('brightness', 0)), -100, 100) / 100
+            c = 1 + clamp(float(seg.get('contrast', 0)), -100, 100) / 100
+            s = 1 + clamp(float(seg.get('saturation', 0)), -100, 100) / 100
+            h = clamp(float(seg.get('hue', 0)), -180, 180)
+            chain = (f"[0:v]trim=start_frame={start}:end_frame={end},setpts=PTS-STARTPTS,"
+                     f"eq=brightness={b}:contrast={c}:saturation={s}")
+            if h:
+                chain += f",hue=h={h}"
+            if seg.get('invert'):
+                chain += ",negate"
+            chain += f"[s{i}]"
+            parts.append(chain)
+        concat_inputs = ''.join(f"[s{i}]" for i in range(len(segments)))
+        parts.append(f"{concat_inputs}concat=n={len(segments)}:v=1:a=0[outv]")
+        return ';'.join(parts)
+    except (TypeError, ValueError, KeyError):
+        return None
+
+
 @app.route('/api/glitch/render', methods=['POST'])
 def render():
     if 'video' not in request.files:
@@ -85,11 +116,11 @@ def render():
     f = request.files['video']
 
     try:
-        brightness = clamp(float(request.form.get('brightness', 0)), -100, 100) / 100
-        contrast = 1 + clamp(float(request.form.get('contrast', 0)), -100, 100) / 100
-        saturation = 1 + clamp(float(request.form.get('saturation', 0)), -100, 100) / 100
-    except ValueError:
-        brightness, contrast, saturation = 0, 1, 1
+        segments = json.loads(request.form.get('segments', '[]'))
+        if not isinstance(segments, list):
+            segments = []
+    except (TypeError, ValueError):
+        segments = []
 
     crf = '16' if request.form.get('quality') == 'high' else '20'
 
@@ -99,8 +130,9 @@ def render():
         f.save(in_path)
 
         args = ['-fflags', '+genpts+igndts', '-i', in_path]
-        if brightness != 0 or contrast != 1 or saturation != 1:
-            args += ['-vf', f'eq=brightness={brightness}:contrast={contrast}:saturation={saturation}']
+        filter_complex = build_color_filter(segments)
+        if filter_complex:
+            args += ['-filter_complex', filter_complex, '-map', '[outv]']
         args += ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', crf,
                   '-pix_fmt', 'yuv420p', '-movflags', '+faststart', out_path]
 

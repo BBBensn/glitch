@@ -127,14 +127,21 @@ Datamosh.selectClipFrames = function (clip, isFirstClip) {
    clip.cutPoint, the tail of each clip (except the last) optionally
    repeated before the cut into the next clip, P-frames at/after each
    clip's cutPoint optionally byte-corrupted. */
+/* Returns { bytes, segments }. segments[i] = { clipIndex, start, end }
+   marks which output-frame range (end exclusive) came from clips[i] —
+   including its duplicated tail frames, since those still show that
+   clip's own content. Lets the server grade each clip's own frame range
+   independently instead of the whole merged video uniformly. */
 Datamosh.mergeAndMosh = function (clips, opts) {
   const rand = dmMulberry32(opts.seed || 1);
   const prob = clamp(opts.noiseIntensity, 0, 100) / 100 * 0.15;
   const allChunks = [];
+  const segments = [];
 
   clips.forEach((clip, ci) => {
     const isFirst = ci === 0;
     const idxList = Datamosh.selectClipFrames(clip, isFirst);
+    const segStart = allChunks.length;
     const clipChunks = idxList.map(i => {
       const f = clip.parsed.frames[i];
       const data = clip.parsed.bytes.slice(f.offset, f.offset + f.size);
@@ -151,7 +158,9 @@ Datamosh.mergeAndMosh = function (clips, opts) {
       const tail = clipChunks.slice(-opts.dupWindow);
       for (let r = 0; r < opts.dupCount; r++) allChunks.push(...tail);
     }
+
+    segments.push({ clipIndex: ci, start: segStart, end: allChunks.length });
   });
 
-  return dmAssemble(clips[0].parsed.headerBytes, allChunks);
+  return { bytes: dmAssemble(clips[0].parsed.headerBytes, allChunks), segments };
 };

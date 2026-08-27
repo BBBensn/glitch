@@ -24,10 +24,11 @@ let clips = [];
 let uidCounter = 1;
 let renderedBlob = null;
 let activeClipDrag = null; // { clip, target: 'in'|'out'|'cut', canvas, isFirst, draw }
-const globalParams = {
-  dupWindow: 0, dupCount: 0, noiseIntensity: 0, seed: 1,
-  brightness: 0, contrast: 0, saturation: 0,
-};
+const globalParams = { dupWindow: 0, dupCount: 0, noiseIntensity: 0, seed: 1 };
+
+function defaultClipColor() {
+  return { brightness: 0, contrast: 0, saturation: 0, hue: 0, invert: false };
+}
 
 function setStatus(state, text) {
   statusDot.dataset.state = state;
@@ -38,7 +39,7 @@ function setStatus(state, text) {
 function addClip(file) {
   if (!file || !file.type.startsWith('video/')) return;
   const wasFirst = clips.length === 0;
-  const clip = { uid: uidCounter++, name: file.name, file, parsed: null, error: null };
+  const clip = { uid: uidCounter++, name: file.name, file, parsed: null, error: null, colorOpen: false, ...defaultClipColor() };
   clips.push(clip);
   renderClipList();
   updateButtons();
@@ -116,6 +117,12 @@ function renderClipList() {
       info.textContent = `${clip.parsed.frames.length}f`;
       actions.appendChild(info);
     }
+    const colorToggle = document.createElement('button');
+    colorToggle.className = 'icon-btn' + (clip.colorOpen ? ' toggled' : '');
+    colorToggle.title = 'Farbe';
+    colorToggle.textContent = '🎨';
+    colorToggle.addEventListener('click', () => { clip.colorOpen = !clip.colorOpen; renderClipList(); });
+    actions.appendChild(colorToggle);
     const up = document.createElement('button');
     up.className = 'icon-btn'; up.title = 'Nach oben'; up.textContent = '↑'; up.disabled = index === 0;
     up.addEventListener('click', () => { [clips[index - 1], clips[index]] = [clips[index], clips[index - 1]]; renderClipList(); });
@@ -153,6 +160,36 @@ function renderClipList() {
         '<span><i class="legend-dot legend-trim"></i> In/Out</span>';
       card.appendChild(legend);
       clip.canvas = canvas;
+    }
+
+    if (clip.colorOpen) {
+      const colorPanel = document.createElement('div');
+      colorPanel.className = 'clip-color-panel';
+      colorPanel.appendChild(buildSlider('Helligkeit', -100, 100, 1, clip.brightness, v => clip.brightness = v));
+      colorPanel.appendChild(buildSlider('Kontrast', -100, 100, 1, clip.contrast, v => clip.contrast = v));
+      colorPanel.appendChild(buildSlider('Sättigung', -100, 100, 1, clip.saturation, v => clip.saturation = v));
+      colorPanel.appendChild(buildSlider('Farbton', -180, 180, 1, clip.hue, v => clip.hue = v));
+
+      const invertRow = document.createElement('label');
+      invertRow.className = 'param-checkbox';
+      const invertInput = document.createElement('input');
+      invertInput.type = 'checkbox';
+      invertInput.checked = clip.invert;
+      invertInput.addEventListener('change', () => { clip.invert = invertInput.checked; });
+      invertRow.append(invertInput, document.createTextNode('Invertieren'));
+      colorPanel.appendChild(invertRow);
+
+      const applyAllBtn = document.createElement('button');
+      applyAllBtn.className = 'btn small-btn';
+      applyAllBtn.textContent = 'Auf alle Clips anwenden';
+      applyAllBtn.addEventListener('click', () => {
+        const { brightness, contrast, saturation, hue, invert } = clip;
+        clips.forEach(c => { if (c !== clip) Object.assign(c, { brightness, contrast, saturation, hue, invert }); });
+        renderClipList();
+      });
+      colorPanel.appendChild(applyAllBtn);
+
+      card.appendChild(colorPanel);
     }
 
     clipListEl.appendChild(card);
@@ -292,18 +329,6 @@ function buildSlider(label, min, max, step, value, onInput) {
 function buildControls() {
   controlsEl.innerHTML = '';
 
-  const colorCard = document.createElement('div');
-  colorCard.className = 'effect-card';
-  colorCard.style.setProperty('--accent', '#facc15');
-  const colorBody = document.createElement('div');
-  colorBody.className = 'effect-body';
-  colorBody.style.marginTop = '0'; colorBody.style.paddingTop = '0'; colorBody.style.borderTop = 'none';
-  colorBody.appendChild(buildSlider('Helligkeit', -100, 100, 1, globalParams.brightness, v => globalParams.brightness = v));
-  colorBody.appendChild(buildSlider('Kontrast', -100, 100, 1, globalParams.contrast, v => globalParams.contrast = v));
-  colorBody.appendChild(buildSlider('Sättigung', -100, 100, 1, globalParams.saturation, v => globalParams.saturation = v));
-  colorCard.appendChild(colorBody);
-  controlsEl.appendChild(colorCard);
-
   const card = document.createElement('div');
   card.className = 'effect-card';
   card.style.setProperty('--accent', '#FF0051');
@@ -333,6 +358,23 @@ function buildControls() {
   controlsEl.appendChild(hint);
 }
 
+/* Maps mergeResult.segments (frame ranges in the merged/moshed output) to
+   each source clip's own color settings, for the server's per-segment
+   ffmpeg filter_complex. colorClips must be indexable the same way the
+   clips were passed into Datamosh.mergeAndMosh (i.e. clip i's color lives
+   at colorClips[i]) — the reprepared clips used for export don't carry
+   color themselves, so callers pass the original clip objects here. */
+function buildSegmentsPayload(colorClips, mergeResult) {
+  return mergeResult.segments.map(seg => {
+    const c = colorClips[seg.clipIndex];
+    return {
+      start: seg.start, end: seg.end,
+      brightness: c.brightness, contrast: c.contrast, saturation: c.saturation,
+      hue: c.hue, invert: c.invert,
+    };
+  });
+}
+
 /* ── Render ── */
 function doRender(clean) {
   const validClips = clips.filter(c => c.parsed);
@@ -349,9 +391,9 @@ function doRender(clean) {
     cutPoint: clean ? c.outFrame + 1 : c.cutPoint,
   }));
 
-  let moshed;
+  let mergeResult;
   try {
-    moshed = Datamosh.mergeAndMosh(clipsForMerge, opts);
+    mergeResult = Datamosh.mergeAndMosh(clipsForMerge, opts);
   } catch (err) {
     alert(`Fehler beim Zusammenbauen: ${err.message}`);
     return;
@@ -365,10 +407,8 @@ function doRender(clean) {
   setStatus('busy', 'rendert…');
 
   const form = new FormData();
-  form.append('video', new Blob([moshed], { type: 'video/x-msvideo' }), 'moshed.avi');
-  form.append('brightness', globalParams.brightness);
-  form.append('contrast', globalParams.contrast);
-  form.append('saturation', globalParams.saturation);
+  form.append('video', new Blob([mergeResult.bytes], { type: 'video/x-msvideo' }), 'moshed.avi');
+  form.append('segments', JSON.stringify(buildSegmentsPayload(validClips, mergeResult)));
 
   fetch(`${API_BASE}/render`, { method: 'POST', body: form })
     .then(async res => {
@@ -451,12 +491,10 @@ exportBtn.addEventListener('click', () => {
 
   Promise.all(validClips.map(c => reprepareClip(c, width)))
     .then(clipsForMerge => {
-      const moshed = Datamosh.mergeAndMosh(clipsForMerge, { ...globalParams });
+      const mergeResult = Datamosh.mergeAndMosh(clipsForMerge, { ...globalParams });
       const form = new FormData();
-      form.append('video', new Blob([moshed], { type: 'video/x-msvideo' }), 'moshed.avi');
-      form.append('brightness', globalParams.brightness);
-      form.append('contrast', globalParams.contrast);
-      form.append('saturation', globalParams.saturation);
+      form.append('video', new Blob([mergeResult.bytes], { type: 'video/x-msvideo' }), 'moshed.avi');
+      form.append('segments', JSON.stringify(buildSegmentsPayload(validClips, mergeResult)));
       form.append('quality', 'high');
       return fetch(`${API_BASE}/render`, { method: 'POST', body: form });
     })

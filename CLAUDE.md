@@ -8,7 +8,7 @@ Projekt-spezifischer Kontext. Ergänzt `~/.claude/CLAUDE.md`.
 
 - **Name:** glitch
 - **Domain:** glitch.bensn.me
-- **Version:** v2.5.0
+- **Version:** v2.6.0
 - **Status:** active
 - **Stack:** Vanilla JS + Canvas API (Foto-Modus, clientseitig, kein Backend) + Flask/ffmpeg-Backend (Video-Modus, Port 5007)
 
@@ -160,7 +160,7 @@ Alle drei Modi (`cropModeLayerId`, `canvasCropMode`, `maskEditFx`) sind gegensei
 
 **Warum kein ffmpeg.wasm:** die Byte-Manipulation selbst ist reines JS (schnell, interaktiv, kein Encoder nötig). Nur Encode (prepare) und Decode (render) brauchen einen echten Codec — dafür reicht ein schlanker Server-Endpoint, ohne WASM-Overhead im Browser.
 
-**Grundkorrektur (Helligkeit/Kontrast/Sättigung):** anders als bei Fotos gibt es hier keine Pixel-Effekt-Pipeline (die Bytes sind komprimierte MPEG4-Daten, kein RGB) — läuft stattdessen als ffmpeg `eq`-Filter im `/api/glitch/render`-Schritt (`brightness`/`contrast`/`saturation` als Form-Felder, serverseitig geclamped).
+**Grundkorrektur (Helligkeit/Kontrast/Sättigung/Farbton/Invertieren) — pro Clip:** anders als bei Fotos gibt es hier keine Pixel-Effekt-Pipeline (die Bytes sind komprimierte MPEG4-Daten, kein RGB) — läuft stattdessen als ffmpeg `eq`/`hue`/`negate`-Filterkette im `/api/glitch/render`-Schritt. Jeder Clip hat eigene Regler (`clip.brightness/contrast/saturation/hue/invert`, UI hinter einem "Farbe"-Toggle je Clip-Karte, "Auf alle Clips anwenden" broadcastet die Werte eines Clips auf alle anderen). Da die Farbgebung *pro Original-Clip* gelten muss, aber der Client vor dem Rendern bereits alle Clips zu einem einzigen gemoshten AVI-Byte-Stream zusammenfügt (`Datamosh.mergeAndMosh`), reicht ein einzelner globaler ffmpeg-Filter nicht mehr aus. Lösung: `mergeAndMosh` gibt jetzt `{ bytes, segments }` zurück — `segments[i] = {clipIndex, start, end}` markiert, welcher Ausgabe-Frame-Bereich (inkl. wiederholter Tail-Frames) von welchem Clip stammt. Das Frontend baut daraus ein JSON-Payload (Start/Ende + Farbwerte je Segment, `form.append('segments', ...)`), der Server (`build_color_filter()` in `server/app.py`) übersetzt das in eine ffmpeg `filter_complex`-Kette: pro Segment `trim=start_frame:end_frame,setpts=PTS-STARTPTS,eq=...[,hue=...][,negate]`, alle Segmente per `concat=n=N:v=1:a=0[outv]` wieder zusammengefügt. Funktioniert identisch für Mosh-Vorschau, "Ohne Moshing ansehen" und High-Quality-Export (dort werden die Segment-Farbwerte aus den *Original*-Clip-Objekten gezogen, nicht aus den für den Export neu preparierten Clips, die selbst keine Farbwerte tragen).
 
 **Export in hoher Qualität:** die editierte Mosh-Entscheidung (In/Out, Cut-Point, Wiederhol-/Rausch-Parameter) ist immer eine Liste von Frame-*Indizes* — die bleibt gültig, egal bei welcher Auflösung ein Clip encodiert wurde, solange FPS/GOP gleich bleiben (nur `-vf scale` ändert sich). Deshalb: `/api/glitch/prepare` nimmt jetzt einen optionalen `width`-Parameter (Default 480, Cap 1920). Der "Exportieren"-Button im Frontend behält das Original-`File` jedes Clips (`clip.file`), re-prepared bei Klick alle Clips in der gewählten Export-Auflösung (720p/1080p), wendet dieselben Trim/Cut-Point-Werte an (defensiv auf neue Frame-Anzahl geclampt, falls sie doch abweicht) und rendert mit `crf=16` statt `20`. Deutlich langsamer als "Vorschau rendern" (mehrere Server-Roundtrips), aber nur nötig beim finalen Export.
 
@@ -199,6 +199,7 @@ ffmpeg wurde für dieses Projekt via `apt install ffmpeg` auf dem Server install
 | v2.3.0 | Foto: Ebenen-System — mehrere Bilder überlagern, 16 native Blend-Modi, Deckkraft, Größe, Drag-to-Move, "Neue Leinwand" für Collagen | ✅ done |
 | v2.4.0 | Foto: Crop pro Ebene/Komposition, Masken-Funktion (Kreis/Rechteck, Effekte nur in ausgewähltem Bereich anwenden), Leinwand-Hintergrund per Farbwähler | ✅ done |
 | v2.5.0 | Foto: Ebenen-/Effekt-Panel scrollbar + einklappbar, Drehen/Spiegeln pro Ebene, neuer Pixel-Drag-Effekt; Cache-Busting für JS/CSS | ✅ done |
+| v2.6.0 | Video: Grundkorrektur (Helligkeit/Kontrast/Sättigung/Farbton/Invertieren) pro Clip statt global, "Auf alle Clips anwenden"-Broadcast; Server-seitige Segment-basierte ffmpeg-Filterkette | ✅ done |
 
 ---
 
